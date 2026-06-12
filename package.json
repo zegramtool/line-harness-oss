@@ -15,6 +15,7 @@
     "deploy:setup": "node packages/create-line-harness/dist/index.js",
     "deploy:update": "node packages/create-line-harness/dist/index.js update",
     "tacteq:activate-welcome": "tsx scripts/tacteq/activate-welcome.ts",
+    "tacteq:upload-welcome-image": "tsx scripts/tacteq/upload-welcome-image.ts",
     "tacteq:sync-followers": "tsx scripts/tacteq/sync-followers.ts --token-from-d1",
     "tacteq:import-chat": "tsx scripts/tacteq/import-chat-history.ts",
     "test:scripts": "vitest run --config vitest.config.ts",
