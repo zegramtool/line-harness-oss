@@ -2,9 +2,9 @@
  * TacTeQ 友だち追加ウェルカム（4通）をセットアップする。
  *
  * 1. 挨拶テキスト
- * 2. オレンジのお問合せフォームボタン（Flex）
- * 3. お見積り用写真撮影ガイド（画像）
- * 4. フォーム URL + 注意書き（テキスト）
+ * 2. お見積り用写真撮影ガイド（画像）
+ * 3. オレンジのお問合せフォームボタン（Flex）
+ * 4. 注意書き（テキスト・URL なし）
  *
  * Usage:
  *   pnpm tacteq:activate-welcome
@@ -36,18 +36,17 @@ const IMAGE_R2_KEY = 'welcome-estimate-photo-guide.png';
 const WELCOME_TEXT = `{Nickname}さん、はじめまして👋！
 友だち追加ありがとうございます。{AccountName}です。
 
-リペア（補修）のお見積りやお問い合わせの方はお手数ですが以下のオレンジの『お問合せフォームの入力はこちら』ボタンにて質問にできる限りお答えいただけますとスムーズなご案内が可能です。見積り用のお写真の撮り方は👇をご確認お願いいたします。
+リペア（補修）のお見積りやお問い合わせの方はお手数ですが以下のオレンジの『お問合せフォーム入力』ボタンにて質問にできる限りお答えいただけますとスムーズなご案内が可能です。見積り用のお写真の撮り方は
+👇をご確認お願いいたします。
 
 LINEでのやり取りをご希望の方は
-⚠️公式LINEの仕様上友達追加のみでは通知が来ず返信する事が出来ませんのでお手数ですが
+⚠️公式LINEの仕様上友達追加のみでは通知が来ず返信する事が出来ません⚠️のでお手数ですが
 
 【問合せ】や【見積り希望】
 
 とメッセージ送信の上、問合せフォームの入力をお願いいたします。`;
 
-const CLOSING_TEXT = `${FORM_URL}
-
-上記の問合せフォームに入力のご協力をいただけない場合はお見積りなどの対応が出来ない場合がございます。
+const CLOSING_TEXT = `上記の問合せフォームに入力のご協力をいただけない場合はお見積りなどの対応が出来ない場合がございます。
 
 スムーズなご案内をさせて頂く為
 お手数おかけしますがご協力お願い致します💡`;
@@ -94,7 +93,7 @@ function formButtonFlex(formUrl: string): string {
           height: 'md',
           action: {
             type: 'uri',
-            label: 'お問合せフォームの入力はこちら',
+            label: 'お問合せフォーム入力',
             uri: formUrl,
           },
         },
@@ -174,14 +173,14 @@ async function main(): Promise<void> {
     {
       stepOrder: 2,
       delayMinutes: 0,
-      messageType: 'flex' as const,
-      messageContent: formButtonFlex(FORM_URL),
+      messageType: 'image' as const,
+      messageContent: imageStepContent(cfg.workerUrl),
     },
     {
       stepOrder: 3,
       delayMinutes: 0,
-      messageType: 'image' as const,
-      messageContent: imageStepContent(cfg.workerUrl),
+      messageType: 'flex' as const,
+      messageContent: formButtonFlex(FORM_URL),
     },
     {
       stepOrder: 4,
@@ -199,7 +198,7 @@ async function main(): Promise<void> {
     console.log(`Created step ${step.stepOrder} (${step.messageType})`);
   }
 
-  console.log('\nDone. New friends receive 4 messages on add (text → button → image → link).');
+  console.log('\nDone. New friends receive 4 messages on add (text → image → button → closing).');
   console.log('Variables: {Nickname} = display name, {AccountName} =', ACCOUNT_NAME);
 }
 
