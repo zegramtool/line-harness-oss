@@ -14,6 +14,9 @@
     "db:migrate:local": "wrangler d1 execute line-crm --file=packages/db/schema.sql --local",
     "deploy:setup": "node packages/create-line-harness/dist/index.js",
     "deploy:update": "node packages/create-line-harness/dist/index.js update",
+    "tacteq:activate-welcome": "tsx scripts/tacteq/activate-welcome.ts",
+    "tacteq:sync-followers": "tsx scripts/tacteq/sync-followers.ts --token-from-d1",
+    "tacteq:import-chat": "tsx scripts/tacteq/import-chat-history.ts",
     "test:scripts": "vitest run --config vitest.config.ts",
     "build:bundle": "tsx scripts/release/build-bundle.ts"
   },
