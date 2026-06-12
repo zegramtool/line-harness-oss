@@ -73,11 +73,14 @@ jobs:
         run: |
           test -n "$D1_DATABASE_ID"
           cd apps/worker
+          WRANGLER_CONFIG="dist/$(echo "${WORKER_NAME}" | tr '-' '_')/wrangler.json"
+          test -f "$WRANGLER_CONFIG"
           sed -i \
             -e "s|\"account_id\":\"[^\"]*\"|\"account_id\":\"${CLOUDFLARE_ACCOUNT_ID}\"|g" \
             -e "s|\"database_name\":\"[^\"]*\"|\"database_name\":\"${D1_DATABASE_NAME}\"|g" \
             -e "s|\"database_id\":\"[^\"]*\"|\"database_id\":\"${D1_DATABASE_ID}\"|g" \
-            dist/line_harness/wrangler.json
+            "$WRANGLER_CONFIG"
+          echo "WRANGLER_CONFIG=$WRANGLER_CONFIG" >> "$GITHUB_ENV"
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -85,4 +88,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/worker
-          command: deploy --config dist/line_harness/wrangler.json --name ${{ vars.WORKER_NAME || 'your-worker-name' }}
+          command: deploy --config ${{ env.WRANGLER_CONFIG }} --name ${{ vars.WORKER_NAME || 'your-worker-name' }}
