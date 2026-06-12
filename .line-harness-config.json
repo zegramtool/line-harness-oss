@@ -1,0 +1,16 @@
+{
+  "projectName": "tacteq-line",
+  "accountId": "a2f7b747bd9d4b217960f68f5c326498",
+  "adminUrl": "https://tacteq-line-admin-88e31c57.pages.dev",
+  "workerUrl": "https://tacteq-line.tacteq-re-a2f.workers.dev",
+  "workerName": "tacteq-line",
+  "d1DatabaseName": "tacteq-line",
+  "d1DatabaseId": "4940892f-86ba-4cf3-9329-69ab8d665c7e",
+  "r2BucketName": "tacteq-line-images",
+  "cfAccountId": "a2f7b747bd9d4b217960f68f5c326498",
+  "workerPublicUrl": "https://tacteq-line.tacteq-re-a2f.workers.dev",
+  "adminProject": "tacteq-line-admin-88e31c57",
+  "adminPublicUrl": "https://tacteq-line-admin-88e31c57.pages.dev",
+  "liffPublicUrl": "https://tacteq-line.tacteq-re-a2f.workers.dev",
+  "manifestUrl": "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
+}
