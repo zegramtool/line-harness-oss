@@ -20,7 +20,8 @@ import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
  * Replace template variables in message content.
  *
  * Supported variables:
- * - {{name}}                → friend's display name
+ * - {{name}} / {Nickname}   → friend's display name
+ * - {{account_name}} / {AccountName} → LINE official account display name
  * - {{uid}}                 → friend's user UUID
  * - {{friend_id}}           → friend's internal ID
  * - {{auth_url:CHANNEL_ID}} → full /auth/line URL with uid for cross-account linking
@@ -30,9 +31,15 @@ export function expandVariables(
   content: string,
   friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null; metadata?: Record<string, unknown> | string | null },
   apiOrigin?: string,
+  accountName?: string | null,
 ): string {
   let result = content;
-  result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
+  const name = friend.display_name || '';
+  const account = accountName || '';
+  result = result.replace(/\{\{name\}\}/g, name);
+  result = result.replace(/\{Nickname\}/g, name);
+  result = result.replace(/\{\{account_name\}\}/g, account);
+  result = result.replace(/\{AccountName\}/g, account);
   result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
   result = result.replace(/\{\{friend_id\}\}/g, friend.id);
   result = result.replace(/\{\{ref\}\}/g, friend.ref_code || '');
@@ -70,6 +77,74 @@ export function expandVariables(
     });
   }
   return result;
+}
+
+export interface PreparedScenarioStep {
+  step: import('@line-crm/db').ScenarioStep;
+  templateIdAtSend: string | null;
+  message: Message;
+}
+
+/**
+ * Build up to 5 LINE messages for scenario steps scheduled at or before "now"
+ * (friend_add immediate delivery). Stops at the first step that is not yet due.
+ */
+export async function prepareImmediateScenarioDeliveries(
+  db: D1Database,
+  steps: import('@line-crm/db').ScenarioStep[],
+  deliveryMode: DeliveryMode,
+  friend: Parameters<typeof expandVariables>[1],
+  workerUrl?: string,
+  accountName?: string | null,
+): Promise<{
+  prepared: PreparedScenarioStep[];
+  lastDeliveredStepOrder: number;
+  nextStep: import('@line-crm/db').ScenarioStep | null;
+  nextDeliveryAt: Date | null;
+}> {
+  const enrolledAtJst = new Date(Date.now() + 9 * 60 * 60_000);
+  const prepared: PreparedScenarioStep[] = [];
+  let lastDeliveredStepOrder = 0;
+
+  for (const step of steps) {
+    if (prepared.length >= 5) break;
+    const scheduledAt = computeNextDeliveryAt(
+      { delivery_mode: deliveryMode },
+      step,
+      { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
+    );
+    if (scheduledAt.getTime() > enrolledAtJst.getTime()) break;
+
+    const resolved = await resolveStepContent(db, step);
+    const resolvedMeta = await resolveMetadata(db, {
+      user_id: (friend as { user_id?: string | null }).user_id ?? null,
+      metadata: (friend as { metadata?: string | null }).metadata ?? null,
+    });
+    const expandedContent = expandVariables(
+      resolved.messageContent,
+      { ...friend, metadata: resolvedMeta },
+      workerUrl,
+      accountName,
+    );
+    prepared.push({
+      step,
+      templateIdAtSend: resolved.templateIdAtSend,
+      message: buildMessage(resolved.messageType, expandedContent),
+    });
+    lastDeliveredStepOrder = step.step_order;
+  }
+
+  const lastIndex = steps.findIndex((s) => s.step_order === lastDeliveredStepOrder);
+  const nextStep = lastIndex >= 0 && lastIndex + 1 < steps.length ? steps[lastIndex + 1] : null;
+  const nextDeliveryAt = nextStep
+    ? computeNextDeliveryAt(
+        { delivery_mode: deliveryMode },
+        nextStep,
+        { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
+      )
+    : null;
+
+  return { prepared, lastDeliveredStepOrder, nextStep, nextDeliveryAt };
 }
 
 /**

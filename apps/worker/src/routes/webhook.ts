@@ -13,16 +13,20 @@ import {
   completeFriendScenario,
   upsertChatOnMessage,
   getLineAccounts,
+  getLineAccountById,
   jstNow,
-  computeNextDeliveryAt,
-  resolveStepContent,
   addTagToFriend,
   getEntryRouteByRefCode,
   getMessageTemplateById,
 } from '@line-crm/db';
 import type { EntryRoute } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import {
+  buildMessage,
+  expandVariables,
+  messageToLogPayload,
+  prepareImmediateScenarioDeliveries,
+} from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -222,65 +226,67 @@ async function handleEvent(
             // - elapsed + offset_days=0 + offset_minutes=0 → 即時
             // - absolute_time で過去時刻 → computeNextDeliveryAt が now に clamp するので即時
             const steps = await getScenarioSteps(db, scenario.id);
-            const firstStep = steps[0];
             const deliveryMode = scenario.delivery_mode ?? 'relative';
-            const enrolledAtJst = new Date(Date.now() + 9 * 60 * 60_000);
-            const firstScheduledAt = firstStep
-              ? computeNextDeliveryAt(
-                  { delivery_mode: deliveryMode },
-                  firstStep,
-                  { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-                )
-              : null;
-            const shouldSendImmediately =
-              firstStep &&
-              firstScheduledAt !== null &&
-              firstScheduledAt.getTime() <= enrolledAtJst.getTime() &&
-              friendScenario.status === 'active';
-            if (firstStep && shouldSendImmediately) {
+            if (steps.length > 0 && friendScenario.status === 'active') {
               try {
-                // Resolve template_id → templates table (参照型)
-                const resolved = await resolveStepContent(db, firstStep);
-                const { resolveMetadata } = await import('../services/step-delivery.js');
-                const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-                const expandedContent = expandVariables(resolved.messageContent, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1]);
-                const message = buildMessage(resolved.messageType, expandedContent);
-                await lineClient.replyMessage(event.replyToken, [message]);
-                console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
-
-                // Log what was actually delivered (post buildMessage normalization)
-                // so the dashboard chat view mirrors LINE 1:1.
-                const logId = crypto.randomUUID();
-                const { messageToLogPayload: logPayload1 } = await import('../services/step-delivery.js');
-                const wbScenarioPayload = logPayload1(message);
-                await db
-                  .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, template_id_at_send, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', 'scenario', ?, ?)`,
-                  )
-                  .bind(logId, friend.id, wbScenarioPayload.messageType, wbScenarioPayload.content, firstStep.id, resolved.templateIdAtSend, jstNow())
-                  .run();
-
-                // Advance or complete the friend_scenario — step 2 のスケジュールも
-                // computeNextDeliveryAt で計算する（elapsed/absolute_time で正しく動かすため）
-                const secondStep = steps[1] ?? null;
-                if (secondStep) {
-                  const nextDeliveryDate = computeNextDeliveryAt(
-                    { delivery_mode: deliveryMode },
-                    secondStep,
-                    { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-                  );
-                  await advanceFriendScenario(db, friendScenario.id, firstStep.step_order, nextDeliveryDate.toISOString().slice(0, -1) + '+09:00');
-                } else {
-                  await completeFriendScenario(db, friendScenario.id);
+                let accountName: string | null = null;
+                if (lineAccountId) {
+                  const account = await getLineAccountById(db, lineAccountId);
+                  accountName = account?.name ?? null;
                 }
+                const { prepared, lastDeliveredStepOrder, nextStep, nextDeliveryAt } =
+                  await prepareImmediateScenarioDeliveries(
+                    db,
+                    steps,
+                    deliveryMode,
+                    friend as Parameters<typeof prepareImmediateScenarioDeliveries>[3],
+                    workerUrl,
+                    accountName,
+                  );
+                if (prepared.length > 0) {
+                  const messages = prepared.map((p) => p.message);
+                  await lineClient.replyMessage(event.replyToken, messages);
+                  console.log(
+                    `Immediate delivery: sent ${messages.length} step(s) to ${userId} (scenario ${scenario.id})`,
+                  );
 
-                // 到達タグ付与 (advance / complete の後)
-                if (firstStep.on_reach_tag_id) {
-                  try {
-                    await addTagToFriend(db, friend.id, firstStep.on_reach_tag_id);
-                  } catch (err) {
-                    console.error(`[scenario] tag attach failed step=${firstStep.id}:`, err);
+                  for (const item of prepared) {
+                    const payload = messageToLogPayload(item.message);
+                    await db
+                      .prepare(
+                        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, template_id_at_send, created_at)
+                         VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', 'scenario', ?, ?)`,
+                      )
+                      .bind(
+                        crypto.randomUUID(),
+                        friend.id,
+                        payload.messageType,
+                        payload.content,
+                        item.step.id,
+                        item.templateIdAtSend,
+                        jstNow(),
+                      )
+                      .run();
+                  }
+
+                  if (nextStep && nextDeliveryAt) {
+                    await advanceFriendScenario(
+                      db,
+                      friendScenario.id,
+                      lastDeliveredStepOrder,
+                      nextDeliveryAt.toISOString().slice(0, -1) + '+09:00',
+                    );
+                  } else {
+                    await completeFriendScenario(db, friendScenario.id);
+                  }
+
+                  const lastStep = prepared[prepared.length - 1]?.step;
+                  if (lastStep?.on_reach_tag_id) {
+                    try {
+                      await addTagToFriend(db, friend.id, lastStep.on_reach_tag_id);
+                    } catch (err) {
+                      console.error(`[scenario] tag attach failed step=${lastStep.id}:`, err);
+                    }
                   }
                 }
               } catch (err) {

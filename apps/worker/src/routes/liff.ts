@@ -882,54 +882,68 @@ liffRoutes.get('/auth/callback', async (c) => {
             // 即時送信は scenario.delivery_mode を踏まえて「now 以前にスケジュールされる」場合のみ。
             // (relative+0min / elapsed+0d0m / absolute_time の過去時刻)
             const steps = await getScenarioSteps(db, scenario.id);
-            const firstStep = steps[0];
-            if (firstStep) {
-              const enrolledAtJst = new Date(Date.now() + 9 * 60 * 60_000);
-              const firstScheduledAt = computeNextLiff(
-                { delivery_mode: scenario.delivery_mode ?? 'relative' },
-                firstStep,
-                { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-              );
-              if (firstScheduledAt.getTime() <= enrolledAtJst.getTime()) {
-                // Resolve template_id → templates table (参照型)
-                const resolved = await resolveStepLiff(db, firstStep);
-                const { resolveMetadata: resolveMetaLiff, messageToLogPayload } = await import('../services/step-delivery.js');
-                const resolvedMetaLiff = await resolveMetaLiff(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-                const expandedContent = expandVariables(
-                  resolved.messageContent,
-                  { ...friend, metadata: resolvedMetaLiff } as Parameters<typeof expandVariables>[1],
+            if (steps.length > 0) {
+              const { getLineAccountById: getAcctById, advanceFriendScenario: advanceFs, completeFriendScenario: completeFs } = await import('@line-crm/db');
+              let accountName: string | null = null;
+              if (matchedAccountId) {
+                const acctRow = await getAcctById(db, matchedAccountId);
+                accountName = acctRow?.name ?? null;
+              }
+              const {
+                prepareImmediateScenarioDeliveries,
+                messageToLogPayload: logPayload,
+              } = await import('../services/step-delivery.js');
+              const { prepared, lastDeliveredStepOrder, nextStep, nextDeliveryAt } =
+                await prepareImmediateScenarioDeliveries(
+                  db,
+                  steps,
+                  scenario.delivery_mode ?? 'relative',
+                  friend as Parameters<typeof prepareImmediateScenarioDeliveries>[3],
                   c.env.WORKER_URL,
+                  accountName,
                 );
-                const pushedMessage = buildMessage(resolved.messageType, expandedContent);
-                await lineClient.pushMessage(lineUserId, [pushedMessage]);
-
-                // messages_log への記録 (到達率分母に含めるため)
-                const oauthLogPayload = messageToLogPayload(pushedMessage);
+              if (prepared.length > 0) {
+                await lineClient.pushMessage(
+                  lineUserId,
+                  prepared.map((p) => p.message),
+                );
                 const nowIso = new Date(Date.now() + 9 * 60 * 60_000)
                   .toISOString()
                   .slice(0, -1) + '+09:00';
-                await db
-                  .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?)`,
-                  )
-                  .bind(
-                    crypto.randomUUID(),
-                    friend.id,
-                    oauthLogPayload.messageType,
-                    oauthLogPayload.content,
-                    firstStep.id,
-                    resolved.templateIdAtSend,
-                    nowIso,
-                  )
-                  .run();
-
-                // 到達タグ付与 (push 後)
-                if (firstStep.on_reach_tag_id) {
+                for (const item of prepared) {
+                  const payload = logPayload(item.message);
+                  await db
+                    .prepare(
+                      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, created_at)
+                       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?)`,
+                    )
+                    .bind(
+                      crypto.randomUUID(),
+                      friend.id,
+                      payload.messageType,
+                      payload.content,
+                      item.step.id,
+                      item.templateIdAtSend,
+                      nowIso,
+                    )
+                    .run();
+                }
+                if (enrollment && nextStep && nextDeliveryAt) {
+                  await advanceFs(
+                    db,
+                    enrollment.id,
+                    lastDeliveredStepOrder,
+                    nextDeliveryAt.toISOString().slice(0, -1) + '+09:00',
+                  );
+                } else if (enrollment) {
+                  await completeFs(db, enrollment.id);
+                }
+                const lastStep = prepared[prepared.length - 1]?.step;
+                if (lastStep?.on_reach_tag_id) {
                   try {
-                    await addTagLiff(db, friend.id, firstStep.on_reach_tag_id);
+                    await addTagLiff(db, friend.id, lastStep.on_reach_tag_id);
                   } catch (err) {
-                    console.error(`[scenario] tag attach failed step=${firstStep.id}:`, err);
+                    console.error(`[scenario] tag attach failed step=${lastStep.id}:`, err);
                   }
                 }
               }

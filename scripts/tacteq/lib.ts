@@ -16,6 +16,7 @@ export interface HarnessConfig {
   workerUrl: string;
   d1DatabaseName: string;
   d1DatabaseId: string;
+  r2BucketName: string;
 }
 
 export interface McpConfig {
@@ -41,6 +42,7 @@ export function loadHarnessConfig(): HarnessConfig {
     workerUrl: raw.workerUrl ?? raw.workerPublicUrl,
     d1DatabaseName: raw.d1DatabaseName,
     d1DatabaseId: raw.d1DatabaseId,
+    r2BucketName: raw.r2BucketName ?? `${raw.projectName}-images`,
   };
 }
 
