@@ -70,7 +70,13 @@ if (!API_URL) {
  * directly, so the token is delivered in the login/session response body and
  * cached here.
  */
-export const CSRF_STORAGE_KEY = 'lh_csrf'
+import {
+  authHeadersForFetch,
+  CSRF_STORAGE_KEY,
+  usesBearerAuth,
+} from './session-auth'
+
+export { CSRF_STORAGE_KEY } from './session-auth'
 
 export function getCsrfToken(): string {
   if (typeof window === 'undefined') return ''
@@ -87,16 +93,16 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const method = (options?.method ?? 'GET').toUpperCase()
   const csrfHeaders: Record<string, string> = {}
-  if (MUTATING_METHODS.has(method)) {
+  if (MUTATING_METHODS.has(method) && !usesBearerAuth()) {
     const token = getCsrfToken()
     if (token) csrfHeaders['X-CSRF-Token'] = token
   }
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
-    // Send the HttpOnly session cookie with every request.
-    credentials: 'include',
+    credentials: usesBearerAuth() ? 'omit' : 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeadersForFetch(),
       ...csrfHeaders,
       ...options?.headers,
     },

@@ -8,6 +8,7 @@ import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
+import ChatCustomerPanel from '@/components/chats/chat-customer-panel'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
 
 interface Chat {
@@ -218,9 +219,9 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-4 border-b border-gray-200 flex items-center gap-3">
-        <button onClick={onBack} className="lg:hidden text-gray-400 hover:text-gray-600">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="px-2 py-2 lg:px-4 lg:py-4 border-b border-gray-200 flex items-center gap-2 bg-white shrink-0 pt-[max(8px,env(safe-area-inset-top))] lg:pt-4">
+        <button onClick={onBack} className="lg:hidden min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
@@ -258,7 +259,32 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
           ))
         )}
       </div>
-      <div className="px-4 py-3 border-t border-gray-200">
+      <div className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0">
+        <div className="flex items-end gap-1.5">
+          <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false }}
+            placeholder="メッセージ"
+            enterKeyHint="send"
+            className="flex-1 text-base border-0 rounded-3xl px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/40 min-h-[44px]"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!message.trim() || sending}
+            className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
+            style={{ backgroundColor: '#06C755' }}
+            aria-label="送信"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div className="hidden lg:block px-4 py-3 border-t border-gray-200">
         <div className="flex gap-2">
           <input
             type="text"
@@ -267,7 +293,6 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
             onKeyDown={(e) => {
-              // IME変換確定のEnterでは送信しない
               if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -334,6 +359,9 @@ export default function ChatsPage() {
   const isComposingRef = useRef(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const mobileTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
     try {
@@ -515,10 +543,11 @@ export default function ChatsPage() {
 
   // Auto-resize textarea as messageContent grows
   useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+    for (const el of [textareaRef.current, mobileTextareaRef.current]) {
+      if (!el) continue
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 128 : 200)}px`
+    }
   }, [messageContent])
 
   const handleSelectChat = (chatId: string) => {
@@ -663,27 +692,70 @@ export default function ChatsPage() {
     }
   }
 
-  const handleStatusUpdate = async (newStatus: Chat['status']) => {
-    if (!selectedChatId) return
+  const handleStatusUpdate = async (newStatus: Chat['status']): Promise<boolean> => {
+    if (!selectedChatId) return false
     try {
-      await api.chats.update(selectedChatId, { status: newStatus })
-      loadChatDetail(selectedChatId)
-      loadChats()
+      const res = await api.chats.update(selectedChatId, { status: newStatus })
+      if (!res.success) {
+        setError((res as { error?: string }).error ?? 'ステータスの更新に失敗しました。')
+        return false
+      }
+      setChatDetail((prev) => (prev ? { ...prev, status: newStatus } : prev))
+      setChats((prev) =>
+        prev.map((c) => (c.id === selectedChatId ? { ...c, status: newStatus } : c)),
+      )
+      return true
     } catch {
       setError('ステータスの更新に失敗しました。')
+      return false
     }
   }
 
-  const handleSaveNotes = async () => {
-    if (!selectedChatId) return
+  const handleSaveNotes = async (): Promise<boolean> => {
+    if (!selectedChatId) return false
     setSavingNotes(true)
     try {
-      await api.chats.update(selectedChatId, { notes })
-      loadChatDetail(selectedChatId)
+      const res = await api.chats.update(selectedChatId, { notes })
+      if (!res.success) {
+        setError((res as { error?: string }).error ?? 'メモの保存に失敗しました。')
+        return false
+      }
+      setChatDetail((prev) => (prev ? { ...prev, notes } : prev))
+      setChats((prev) =>
+        prev.map((c) => (c.id === selectedChatId ? { ...c, notes } : c)),
+      )
+      return true
     } catch {
       setError('メモの保存に失敗しました。')
+      return false
     } finally {
       setSavingNotes(false)
+    }
+  }
+
+  const handleMobileImageSelect = async (file: File | undefined) => {
+    if (!file) return
+    if (!['image/jpeg', 'image/png'].includes(file.type)) {
+      setError('JPEG または PNG の画像を選んでください')
+      return
+    }
+    if (file.size > 1024 * 1024) {
+      setError('画像は 1MB 以下にしてください')
+      return
+    }
+    try {
+      const res = await api.uploads.image(file)
+      if (!res.success) {
+        setError(res.error ?? 'アップロード失敗')
+        return
+      }
+      setPendingImage({
+        mode: 'line-image',
+        originalContentUrl: res.data.url,
+        previewImageUrl: res.data.url,
+      })
+    } catch {
+      setError('画像のアップロードに失敗しました')
     }
   }
 
@@ -701,19 +773,35 @@ export default function ChatsPage() {
   }
 
   return (
-    <div>
-      <Header title="オペレーターチャット" />
+    <div className="h-full flex flex-col lg:h-auto">
+      <div className="hidden lg:block">
+        <Header title="オペレーターチャット" />
+      </div>
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="mx-3 lg:mx-0 mb-2 lg:mb-4 p-3 lg:p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0">
           {error}
         </div>
       )}
 
-      <div className="flex gap-4 h-[calc(100vh-120px)] lg:h-[calc(100vh-180px)]">
+      <div className="flex flex-1 min-h-0 gap-0 lg:gap-4 lg:h-[calc(100vh-180px)]">
         {/* Left Panel: Chat List */}
-        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white lg:rounded-lg lg:shadow-sm lg:border lg:border-gray-200 flex-col overflow-hidden h-full ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
+          <div className="lg:hidden px-1 py-2 border-b border-gray-100 bg-white shrink-0 flex items-center justify-between pt-[max(8px,env(safe-area-inset-top))]">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event('lh:open-sidebar'))}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700"
+              aria-label="メニュー"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <h1 className="text-base font-bold text-gray-900">トーク</h1>
+            <div className="min-w-[44px]" aria-hidden />
+          </div>
           {/* タブ (全て / 未読 / 対応中 / 解決済) は意図的に削除。直近メッセージが見やすい LINE 風一覧を優先。 */}
 
           {/* Filter row */}
@@ -830,8 +918,12 @@ export default function ChatsPage() {
           </div>
         </div>
 
-        {/* Right Panel: Chat Detail */}
-        <div className={`flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
+        {/* Right Panel: Chat Detail — モバイルは公式LINE風フルスクリーン */}
+        <div className={`flex-1 bg-white lg:rounded-lg lg:shadow-sm lg:border lg:border-gray-200 flex-col overflow-hidden ${
+          selectedChatId || selectedFriendId
+            ? 'fixed inset-0 z-[60] flex lg:relative lg:z-auto lg:inset-auto'
+            : 'hidden lg:flex'
+        }`}>
           {selectedFriendId && !selectedChatId ? (
             /* Direct message to friend without existing chat */
             <DirectMessagePanel
@@ -851,32 +943,42 @@ export default function ChatsPage() {
           ) : chatDetail ? (
             <>
               {/* Chat Header */}
-              <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+              <div className="px-2 py-2 lg:px-4 lg:py-4 border-b border-gray-200 flex items-center justify-between gap-2 bg-white shrink-0 pt-[max(8px,env(safe-area-inset-top))] lg:pt-4">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   <button
-                    onClick={() => setSelectedChatId(null)}
-                    className="lg:hidden flex-shrink-0 p-1 -ml-1 text-gray-500 hover:text-gray-700"
+                    onClick={() => { setSelectedChatId(null); setMobileMenuOpen(false) }}
+                    className="lg:hidden flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700"
                     aria-label="戻る"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
                   </button>
                   {chatDetail.friendPictureUrl && (
-                    <img src={chatDetail.friendPictureUrl} alt="" className="w-8 h-8 rounded-full flex-shrink-0" />
+                    <img src={chatDetail.friendPictureUrl} alt="" className="w-9 h-9 lg:w-8 lg:h-8 rounded-full flex-shrink-0" />
                   )}
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
+                    <p className="text-base lg:text-sm font-semibold lg:font-medium text-gray-900 truncate">
                       {chatDetail.friendName}
                     </p>
                     <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${statusConfig[chatDetail.status].className}`}
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] lg:text-xs font-medium mt-0.5 lg:mt-1 ${statusConfig[chatDetail.status].className}`}
                     >
                       {statusConfig[chatDetail.status].label}
                     </span>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen((v) => !v)}
+                  className="lg:hidden min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-600"
+                  aria-label="メニュー"
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" />
+                  </svg>
+                </button>
+                <div className="hidden lg:flex flex-wrap items-center gap-2">
                   {unansweredOnly && chats.length > 1 && (
                     <button
                       type="button"
@@ -920,6 +1022,20 @@ export default function ChatsPage() {
                   )}
                 </div>
               </div>
+
+              {mobileMenuOpen && chatDetail.friendId && (
+                <ChatCustomerPanel
+                  variant="sheet"
+                  friendId={chatDetail.friendId}
+                  status={chatDetail.status}
+                  notes={notes}
+                  savingNotes={savingNotes}
+                  onNotesChange={setNotes}
+                  onSaveNotes={handleSaveNotes}
+                  onStatusChange={handleStatusUpdate}
+                  onClose={() => setMobileMenuOpen(false)}
+                />
+              )}
 
               {/* Messages — LINE-style chat bubbles */}
               <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
@@ -1001,8 +1117,8 @@ export default function ChatsPage() {
                 )}
               </div>
 
-              {/* Notes */}
-              <div className="px-4 py-2 border-t border-gray-200 bg-gray-50">
+              {/* Notes — desktop only */}
+              <div className="hidden lg:block px-4 py-2 border-t border-gray-200 bg-gray-50 shrink-0">
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -1021,8 +1137,85 @@ export default function ChatsPage() {
                 </div>
               </div>
 
-              {/* Send Message Form */}
-              <div className="px-4 py-3 border-t border-gray-200">
+              {/* Mobile composer — LINE 風 */}
+              <div className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0">
+                {pendingImage?.mode === 'line-image' && (
+                  <div className="mb-2 flex items-center gap-2 px-1">
+                    <img
+                      src={pendingImage.previewImageUrl}
+                      alt=""
+                      className="h-14 w-14 rounded-lg object-cover border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPendingImage(null)}
+                      className="text-xs text-gray-600 px-2 py-1 bg-white rounded-md border border-gray-200"
+                    >
+                      取消
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-600 shrink-0"
+                    aria-label="画像を添付"
+                  >
+                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                  </button>
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      void handleMobileImageSelect(f)
+                      e.target.value = ''
+                    }}
+                  />
+                  <textarea
+                    ref={mobileTextareaRef}
+                    rows={1}
+                    value={messageContent}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setMessageContent(value)
+                      if (selectedChatId && isMessageInputFocused && value.trim()) {
+                        void triggerLoadingAnimation(selectedChatId)
+                      }
+                    }}
+                    onCompositionStart={() => { isComposingRef.current = true }}
+                    onCompositionEnd={() => { isComposingRef.current = false }}
+                    onFocus={() => {
+                      setIsMessageInputFocused(true)
+                      if (selectedChatId) void triggerLoadingAnimation(selectedChatId)
+                    }}
+                    onBlur={() => setIsMessageInputFocused(false)}
+                    placeholder="メッセージ"
+                    enterKeyHint="send"
+                    className="flex-1 text-base leading-snug border-0 rounded-3xl px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/40 resize-none max-h-32 min-h-[44px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSendMessage()}
+                    disabled={sending || (!messageContent.trim() && !pendingImage)}
+                    className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
+                    style={{ backgroundColor: '#06C755' }}
+                    aria-label="送信"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Send Message Form — desktop */}
+              <div className="hidden lg:block px-4 py-3 border-t border-gray-200 shrink-0">
                 <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
@@ -1121,9 +1314,10 @@ export default function ChatsPage() {
         {(selectedChatId || selectedFriendId) && (
           <div className="hidden xl:flex">
             <FriendInfoSidebar
-              friendId={selectedFriendId || selectedChatId}
+              friendId={selectedFriendId ?? selectedChatId}
               chatStatus={
-                chatDetail && chatDetail.id === (selectedFriendId || selectedChatId)
+                chatDetail &&
+                chatDetail.friendId === (selectedFriendId ?? selectedChatId)
                   ? { status: chatDetail.status, notes: chatDetail.notes }
                   : undefined
               }
@@ -1131,7 +1325,9 @@ export default function ChatsPage() {
           </div>
         )}
       </div>
-      <CcPromptButton prompts={ccPrompts} />
+      <div className="hidden lg:block">
+        <CcPromptButton prompts={ccPrompts} />
+      </div>
     </div>
   )
 }

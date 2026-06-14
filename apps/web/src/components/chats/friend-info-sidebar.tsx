@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
+import FriendTagEditor from '@/components/friends/friend-tag-editor'
 
 interface FriendDetail {
   id: string
@@ -11,7 +13,7 @@ interface FriendDetail {
   metadata: Record<string, unknown>
   refCode: string | null
   createdAt: string
-  tags: Array<{ id: string; name: string; color: string }>
+  tags: Tag[]
 }
 
 interface ChatStatusInfo {
@@ -53,32 +55,42 @@ function renderValue(value: unknown): string {
 
 export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }: Props) {
   const [friend, setFriend] = useState<FriendDetail | null>(null)
+  const [allTags, setAllTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const loadFriend = useCallback(async (targetId: string, signal: AbortSignal) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [friendRes, tagsRes] = await Promise.all([
+        api.friends.get(targetId),
+        api.tags.list(),
+      ])
+      if (signal.aborted) return
+      if (tagsRes.success) setAllTags(tagsRes.data)
+      if (friendRes.success && friendRes.data) {
+        setFriend(friendRes.data as unknown as FriendDetail)
+      } else {
+        setError((friendRes as { error?: string }).error ?? '友だち情報を取得できませんでした')
+      }
+    } catch (err) {
+      if (signal.aborted) return
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (!signal.aborted) setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!friendId) {
       setFriend(null)
       return
     }
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    api.friends.get(friendId).then((res) => {
-      if (cancelled) return
-      if (res.success && res.data) {
-        setFriend(res.data as unknown as FriendDetail)
-      } else {
-        setError((res as { error?: string }).error ?? '友だち情報を取得できませんでした')
-      }
-    }).catch((err) => {
-      if (cancelled) return
-      setError(err instanceof Error ? err.message : String(err))
-    }).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [friendId])
+    const ac = new AbortController()
+    void loadFriend(friendId, ac.signal)
+    return () => ac.abort()
+  }, [friendId, loadFriend])
 
   // リッチメニュー — loading / error / data を区別して、null=未設定 を取得失敗と
   // 混同しないようにする。Codex review (P3) の指摘で導入。
@@ -185,24 +197,17 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
             {/* Tags */}
             <div className="p-4">
               <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">タグ</h4>
-              {friend.tags.length === 0 ? (
-                <p className="text-[11px] text-gray-400 italic">タグなし</p>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {friend.tags.map((tag) => (
-                    <span
-                      key={tag.id}
-                      className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium"
-                      style={{
-                        backgroundColor: `${tag.color}20`,
-                        color: tag.color,
-                      }}
-                    >
-                      {tag.name}
-                    </span>
-                  ))}
-                </div>
-              )}
+              <FriendTagEditor
+                friendId={friend.id}
+                tags={friend.tags}
+                allTags={allTags}
+                onChange={() => {
+                  if (!friendId) return
+                  const ac = new AbortController()
+                  void loadFriend(friendId, ac.signal)
+                }}
+                compact
+              />
             </div>
 
             {/* Rich Menu */}

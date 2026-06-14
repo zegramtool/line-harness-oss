@@ -16,3 +16,6 @@ apps/web/out/
 apps/worker/dist/
 .worktrees/
 .claude/worktrees/
+# LINE 公式アカウント チャット履歴エクスポート（PII を含むためリポジトリ禁止）
+line_oa_chat_csv_*/
+**/line_oa_chat_csv_*/

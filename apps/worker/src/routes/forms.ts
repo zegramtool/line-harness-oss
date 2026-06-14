@@ -18,6 +18,8 @@ import type {
   FormUsedByAccount,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { verifyCallerLineUserId } from '../services/liff-auth.js';
+import { TACTEQ_FORM_NAME } from '../services/tacteq-form-notify.js';
 
 const forms = new Hono<Env>();
 
@@ -299,6 +301,9 @@ forms.post('/api/forms/:id/submit', async (c) => {
 
     const submissionData = body.data ?? {};
 
+    // LIFF id_token 検証 — なりすまし防止（booking / events と同パターン）
+    const verifiedLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{
       name: string;
@@ -319,13 +324,47 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Resolve friend by lineUserId or friendId
-    let friendId: string | null = body.friendId ?? null;
-    if (!friendId && body.lineUserId) {
-      const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
-      if (friend) {
-        friendId = friend.id;
+    // Resolve friend — verified id_token を最優先
+    let friendId: string | null = null;
+    const isTacteqForm = form.name === TACTEQ_FORM_NAME;
+
+    if (verifiedLineUserId) {
+      if (body.lineUserId && body.lineUserId !== verifiedLineUserId) {
+        return c.json({ success: false, error: 'Identity mismatch' }, 403);
       }
+      const friend = await getFriendByLineUserId(c.env.DB, verifiedLineUserId);
+      if (friend) friendId = friend.id;
+    } else if (!isTacteqForm) {
+      friendId = body.friendId ?? null;
+      if (!friendId && body.lineUserId) {
+        const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
+        if (friend) friendId = friend.id;
+      }
+    }
+
+    const needsTrustedIdentity =
+      isTacteqForm ||
+      Boolean(
+        friendId &&
+          (form.on_submit_tag_id ||
+            form.on_submit_scenario_id ||
+            form.on_submit_message_type ||
+            form.on_submit_webhook_fail_message ||
+            form.save_to_metadata),
+      );
+
+    if (isTacteqForm && !verifiedLineUserId) {
+      return c.json(
+        { success: false, error: 'LINE認証が必要です。LIFFから再度お試しください。' },
+        401,
+      );
+    }
+
+    if (needsTrustedIdentity && friendId && !verifiedLineUserId) {
+      return c.json(
+        { success: false, error: 'LINE認証が必要です。LIFFから再度お試しください。' },
+        401,
+      );
     }
 
     // Webhook gate — skip if client pre-verified via repliers endpoint
@@ -567,9 +606,21 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const { buildRewardMessage } = await import('../services/reward-message.js');
           const rewardFromTrackedLink = buildRewardMessage(rewardTemplate, friend.display_name);
 
+          const { TACTEQ_FORM_NAME } = await import('../services/tacteq-form-notify.js');
+
           if (rewardFromTrackedLink) {
             // Tracked-link reward template overrides everything (per-campaign reward)
             messages.push(rewardFromTrackedLink as ReturnType<typeof buildMessage>);
+          } else if (form.name === TACTEQ_FORM_NAME) {
+            // TacTeQ: 問い合わせサマリー → 写真依頼 → 撮影見本画像
+            const { buildTacteqFormReplyMessages } = await import('../services/tacteq-form-reply.js');
+            messages.push(
+              ...buildTacteqFormReplyMessages({
+                displayName: friend.display_name ?? '',
+                submissionData: submissionData as Record<string, unknown>,
+                workerPublicUrl: apiOrigin,
+              }),
+            );
           } else if (form.on_submit_message_type && form.on_submit_message_content) {
             // Custom form message replaces default diagnostic result
             const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
@@ -605,6 +656,81 @@ forms.post('/api/forms/:id/submit', async (c) => {
           if (r.status === 'rejected') console.error('Form side-effect failed:', r.reason);
         }
       }
+    }
+
+    // TacTeQ 管理者通知 + イベント発火（オートメーション / Webhook 用）
+    {
+      let lineAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+      let lineAccountId: string | null = null;
+      if (friendId) {
+        const friend = await getFriendById(c.env.DB, friendId);
+        lineAccountId = (friend as { line_account_id?: string | null } | null)?.line_account_id ?? null;
+        if (lineAccountId) {
+          const { getLineAccountById } = await import('@line-crm/db');
+          const account = await getLineAccountById(c.env.DB, lineAccountId);
+          if (account) lineAccessToken = account.channel_access_token;
+        }
+      }
+
+      // waitUntil 必須: レスポンス返却後も管理者通知・Notion バックアップを完了させる
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const { notifyTacteqFormSubmission } = await import('../services/tacteq-form-notify.js');
+            await notifyTacteqFormSubmission(c.env.DB, {
+              formName: form.name,
+              formId,
+              friendId,
+              lineAccessToken,
+              lineAccountId,
+              submissionData,
+              adminPublicUrl: c.env.ADMIN_PUBLIC_URL,
+            });
+          } catch (notifyErr) {
+            console.error('TacTeQ form admin notify failed:', notifyErr);
+          }
+
+          try {
+            const { backupTacteqFormToNotion } = await import('../services/tacteq-notion-backup.js');
+            const notionResult = await backupTacteqFormToNotion(c.env.DB, c.env.NOTION_API_TOKEN, {
+              formName: form.name,
+              friendId,
+              lineAccountId,
+              submissionId: submission.id,
+              submissionData,
+              submittedAt: submission.created_at,
+              adminPublicUrl: c.env.ADMIN_PUBLIC_URL,
+            });
+            if (!notionResult.ok && notionResult.error && !notionResult.error.includes('not configured')) {
+              console.error('TacTeQ Notion backup:', notionResult.error);
+            }
+          } catch (notionErr) {
+            console.error('TacTeQ Notion backup failed:', notionErr);
+          }
+
+          try {
+            const { fireEvent } = await import('../services/event-bus.js');
+            await fireEvent(
+              c.env.DB,
+              'form_submission',
+              {
+                friendId: friendId ?? undefined,
+                eventData: {
+                  formId,
+                  formName: form.name,
+                  submissionId: submission.id,
+                  ...submissionData,
+                },
+                conversionEventName: 'SubmitForm',
+              },
+              lineAccessToken,
+              lineAccountId,
+            );
+          } catch (eventErr) {
+            console.error('form_submission fireEvent failed:', eventErr);
+          }
+        })(),
+      );
     }
 
     return c.json({ success: true, data: serializeSubmission(submission) }, 201);

@@ -1,6 +1,14 @@
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 2000;
 
+/** 履歴 CSV インポート分は未対応インボックスの対象外（実際の運用返信待ちではない）。 */
+const INCOMING_FOR_INBOX = `(source IS NULL OR (source != 'postback' AND source != 'csv_import'))`;
+const ML_INCOMING_FOR_INBOX = `(ml.source IS NULL OR (ml.source != 'postback' AND ml.source != 'csv_import'))`;
+/** 人間（または一括整理）による対応済み印。 */
+const OUTGOING_HANDLED = `source IN ('manual', 'inbox_ack')`;
+
+export const INBOX_ACK_SOURCE = 'inbox_ack';
+
 // auto_reply にマッチした incoming は「人間対応不要」として未対応から除外する。
 // 判定戦略は 2 系統:
 //
@@ -78,8 +86,8 @@ const CANDIDATES_SQL = `
   WITH agg AS (
     SELECT
       friend_id,
-      MAX(CASE WHEN direction='incoming' AND (source IS NULL OR source != 'postback') THEN created_at END) AS last_incoming,
-      MAX(CASE WHEN direction='outgoing' AND source='manual' THEN created_at END) AS last_manual,
+      MAX(CASE WHEN direction='incoming' AND ${INCOMING_FOR_INBOX} THEN created_at END) AS last_incoming,
+      MAX(CASE WHEN direction='outgoing' AND ${OUTGOING_HANDLED} THEN created_at END) AS last_manual,
       MAX(CASE WHEN direction='outgoing' AND source IN
           ('auto_reply','automation','automation_backfill','scenario','broadcast')
         THEN created_at END) AS last_machine
@@ -115,14 +123,14 @@ const RECENT_INCOMINGS_SQL = `
   WITH last_manual AS (
     SELECT friend_id, MAX(created_at) AS lm
     FROM messages_log
-    WHERE direction='outgoing' AND source='manual'
+    WHERE direction='outgoing' AND ${OUTGOING_HANDLED}
     GROUP BY friend_id
   )
   SELECT ml.friend_id, ml.message_type, ml.content, ml.created_at
   FROM messages_log ml
   LEFT JOIN last_manual lm ON lm.friend_id = ml.friend_id
   WHERE ml.direction='incoming'
-    AND (ml.source IS NULL OR ml.source != 'postback')
+    AND ${ML_INCOMING_FOR_INBOX}
     AND (lm.lm IS NULL OR ml.created_at > lm.lm)
   ORDER BY ml.friend_id, ml.created_at DESC
 `;
@@ -135,7 +143,7 @@ const RECENT_AUTO_REPLY_OUTGOINGS_SQL = `
   WITH last_manual AS (
     SELECT friend_id, MAX(created_at) AS lm
     FROM messages_log
-    WHERE direction='outgoing' AND source='manual'
+    WHERE direction='outgoing' AND ${OUTGOING_HANDLED}
     GROUP BY friend_id
   )
   SELECT ml.friend_id, ml.created_at

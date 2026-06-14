@@ -27,6 +27,9 @@ const nextConfig: NextConfig = {
     APP_VERSION: pkg.version,
     APP_COMMIT_SHA: buildSha.slice(0, 12),
     APP_BUILD_TIME: buildTime,
+    // TacTeQ はフォーク運用のため upstream とのハッシュ比較バナーは既定で無効
+    NEXT_PUBLIC_UPDATE_BANNER_ENABLED:
+      process.env.NEXT_PUBLIC_UPDATE_BANNER_ENABLED ?? 'false',
   },
 }
 export default nextConfig

@@ -9,8 +9,25 @@ import type { Env } from '../index.js';
 vi.mock('@line-crm/db', () => ({
   getStaffByApiKey: vi.fn(async (_db: unknown, token: string) => {
     if (token !== 'staff-key') return null;
-    return { id: 'staff-1', name: 'Staff One', role: 'admin' };
+    return { id: 'staff-1', name: 'Staff One', role: 'admin', is_active: 1 };
   }),
+  getStaffById: vi.fn(async (_db: unknown, id: string) => {
+    if (id !== 'staff-1') return null;
+    return { id: 'staff-1', name: 'Staff One', role: 'admin', is_active: 1 };
+  }),
+  isAdminSessionToken: (token: string) => token.startsWith('lh_sess_'),
+  getAdminSession: vi.fn(async (_db: unknown, token: string) => {
+    if (token !== 'lh_sess_valid') return null;
+    return {
+      token,
+      staff_id: 'staff-1',
+      expires_at: '2099-12-31T23:59:59.999+09:00',
+      created_at: '2026-01-01T00:00:00.000+09:00',
+    };
+  }),
+  createAdminSession: vi.fn(async () => 'lh_sess_new'),
+  purgeExpiredAdminSessions: vi.fn(async () => {}),
+  revokeAdminSession: vi.fn(async () => {}),
 }));
 
 const PAGES = 'https://line-crm-admin.pages.dev';
@@ -230,6 +247,26 @@ describe('session endpoint', () => {
     const body = await res.json() as { csrfToken: string };
     expect(body.csrfToken).toBeTruthy();
     expect(cookieFor(res, 'lh_csrf') ?? '').toContain(`lh_csrf=${body.csrfToken}`);
+  });
+});
+
+describe('mobile session tokens', () => {
+  test('preferBearer login returns opaque sessionToken', async () => {
+    const res = await app().request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey: 'staff-key', preferBearer: true }),
+      headers: { 'Content-Type': 'application/json' },
+    }, crossSiteEnv());
+    expect(res.status).toBe(200);
+    const body = await res.json() as { sessionToken: string };
+    expect(body.sessionToken).toBe('lh_sess_new');
+  });
+
+  test('Bearer with session token authenticates', async () => {
+    const res = await app().request('/api/protected', {
+      headers: { Authorization: 'Bearer lh_sess_valid' },
+    }, crossSiteEnv());
+    expect(res.status).toBe(200);
   });
 });
 

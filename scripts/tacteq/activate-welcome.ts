@@ -10,7 +10,7 @@
  *   pnpm tacteq:activate-welcome
  *   pnpm tacteq:upload-welcome-image   # 初回 or 画像差し替え時
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -28,9 +28,26 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const SCENARIO_ID = 'ed6b2fb7-3372-49c6-ab1d-113b3fc82fc0';
 const ACCOUNT_NAME = process.env.TACTEQ_ACCOUNT_NAME?.trim() || 'TacTeQ';
-const FORM_URL =
-  process.env.TACTEQ_FORM_URL?.trim() ||
+const FORM_CONFIG_PATH = join(SCRIPT_DIR, 'tacteq-form.json');
+const NOTION_FALLBACK =
   'https://graceful-robe-1ed.notion.site/1bbec524d682805c87f9dda6b34801a9?pvs=105';
+
+function resolveFormUrl(): string {
+  if (process.env.TACTEQ_FORM_URL?.trim()) {
+    return process.env.TACTEQ_FORM_URL.trim();
+  }
+  if (existsSync(FORM_CONFIG_PATH)) {
+    try {
+      const cfg = JSON.parse(readFileSync(FORM_CONFIG_PATH, 'utf8')) as { inquiryUrl?: string };
+      if (cfg.inquiryUrl) return cfg.inquiryUrl;
+    } catch {
+      // fall through
+    }
+  }
+  return NOTION_FALLBACK;
+}
+
+const FORM_URL = resolveFormUrl();
 const IMAGE_R2_KEY = 'welcome-estimate-photo-guide.png';
 
 const WELCOME_TEXT = `{Nickname}さん、はじめまして👋！
