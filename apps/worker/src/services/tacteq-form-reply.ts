@@ -1,4 +1,5 @@
 import type { Message } from '@line-crm/line-sdk';
+import { formatTargetAreasStringForDisplay } from '../client/tacteq-inquiry-fields.js';
 import { buildMessage } from './step-delivery.js';
 
 export const TACTEQ_ESTIMATE_PHOTO_GUIDE_R2_KEY = 'welcome-estimate-photo-guide.png';
@@ -66,10 +67,26 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
+function normalizeSubmissionData(data: Record<string, unknown>): Record<string, unknown> {
+  const detail = String(data.target_area_detail ?? '').trim();
+  if (!detail || data.target_areas === undefined || data.target_areas === null) return data;
+
+  const areasStr = String(data.target_areas);
+  const normalizedAreas = formatTargetAreasStringForDisplay(areasStr, detail);
+  const mergedIntoAreas = normalizedAreas !== areasStr;
+
+  return {
+    ...data,
+    target_areas: normalizedAreas,
+    ...(mergedIntoAreas ? { target_area_detail: undefined } : {}),
+  };
+}
+
 function buildSummaryRows(data: Record<string, unknown>) {
+  const normalized = normalizeSubmissionData(data);
   const rows: Array<{ label: string; value: string }> = [];
   for (const key of FIELD_ORDER) {
-    const value = data[key];
+    const value = normalized[key];
     if (value === undefined || value === null || value === '') continue;
     rows.push({
       label: TACTEQ_FIELD_LABELS[key] ?? key,
