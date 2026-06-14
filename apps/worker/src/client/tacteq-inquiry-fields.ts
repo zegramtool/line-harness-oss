@@ -31,7 +31,8 @@ export const CUSTOMER_TYPES = ['業者様', '個人様'] as const;
 
 export const HOUSING_TYPES = [
   '持家（戸建て）',
-  'マンション',
+  '持家（マンション）',
+  '賃貸・借家',
   '店舗',
   '業者様がお客様先で傷をつけてしまったケース',
 ] as const;
@@ -51,7 +52,7 @@ export const REQUEST_PREFERENCES = [
   'プロに相談して決めたい',
 ] as const;
 
-export const CONTACT_METHODS = ['LINE', '電話', 'ショートメール', 'メール', 'どれでも'] as const;
+export const CONTACT_METHODS = ['LINE', '電話', 'ショートメール', 'メール'] as const;
 
 export const FIRE_INSURANCE_OPTIONS = [
   '使用予定',
@@ -123,12 +124,39 @@ export function needsAreaDetail(areas: string[]): boolean {
   return areas.some((a) => a === '自由入力' || a === 'その他');
 }
 
-export function needsPhone(contactMethod: string): boolean {
-  return contactMethod === '電話' || contactMethod === 'ショートメール';
+/** チェックボックスの「自由入力」「その他」を、ユーザーが入力した詳細テキストに置き換える */
+export function formatTargetAreasForSubmission(areas: string[], detail: string): string {
+  const trimmed = detail.trim();
+  return areas
+    .map((area) => (needsAreaDetail([area]) && trimmed ? trimmed : area))
+    .join('、');
 }
 
-export function needsEmail(contactMethod: string): boolean {
-  return contactMethod === 'メール';
+/** 保存済み回答の表示用（旧データで「自由入力」のまま残っている場合の補正） */
+export function formatTargetAreasStringForDisplay(areasStr: string, detail: string): string {
+  const trimmed = detail.trim();
+  if (!areasStr || !trimmed) return areasStr;
+  return areasStr
+    .split('、')
+    .map((part) => (needsAreaDetail([part.trim()]) ? trimmed : part))
+    .join('、');
+}
+
+function normalizeContactMethods(methods: string | readonly string[]): readonly string[] {
+  if (Array.isArray(methods)) return methods;
+  if (!methods) return [];
+  return methods
+    .split('、')
+    .map((m) => m.trim())
+    .filter(Boolean);
+}
+
+export function needsPhone(methods: string | readonly string[]): boolean {
+  return normalizeContactMethods(methods).some((m) => m === '電話' || m === 'ショートメール');
+}
+
+export function needsEmail(methods: string | readonly string[]): boolean {
+  return normalizeContactMethods(methods).some((m) => m === 'メール');
 }
 
 export async function lookupJapaneseAddress(postalCode: string): Promise<string | null> {

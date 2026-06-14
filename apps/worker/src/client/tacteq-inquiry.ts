@@ -19,6 +19,7 @@ import {
   needsPhone,
   needsEmail,
   lookupJapaneseAddress,
+  formatTargetAreasForSubmission,
 } from './tacteq-inquiry-fields.js';
 
 declare const liff: {
@@ -51,7 +52,7 @@ interface WizardState {
   requestPreference: string;
   firstTimeRepair: string;
   noticedSince: string;
-  contactMethod: string;
+  contactMethods: string[];
   phone: string;
   email: string;
   fireInsurance: string;
@@ -81,7 +82,7 @@ const state: WizardState = {
   requestPreference: '',
   firstTimeRepair: '',
   noticedSince: '',
-  contactMethod: 'LINE',
+  contactMethods: [],
   phone: '',
   email: '',
   fireInsurance: '',
@@ -444,13 +445,15 @@ function render(): void {
     '',
     `<div class="tq-field">
        <p class="tq-label">ご希望の連絡手段 <span class="tq-required">*</span></p>
-       <div class="tq-options">${renderRadioOptions('contact_method', CONTACT_METHODS, state.contactMethod)}</div>
+       <p class="tq-hint">複数選択できます</p>
+       <div class="tq-options">${renderCheckboxOptions('contact_method', [...CONTACT_METHODS], state.contactMethods)}</div>
      </div>
-     <div class="tq-field" id="phone-field" style="${needsPhone(state.contactMethod) ? '' : 'display:none'}">
-       <label class="tq-label" for="phone">お電話番号 <span class="tq-required">*</span></label>
+     <div class="tq-field" id="phone-field">
+       <label class="tq-label" for="phone">お電話番号${needsPhone(state.contactMethods) ? ' <span class="tq-required">*</span>' : ''}</label>
+       <p class="tq-hint">お急ぎの方は電話番号を入力してください</p>
        <input class="tq-input" id="phone" type="tel" value="${escapeHtml(state.phone)}" placeholder="例：09012345678" />
      </div>
-     <div class="tq-field" id="email-field" style="${needsEmail(state.contactMethod) ? '' : 'display:none'}">
+     <div class="tq-field" id="email-field" style="${needsEmail(state.contactMethods) ? '' : 'display:none'}">
        <label class="tq-label" for="email">メールアドレス <span class="tq-required">*</span></label>
        <input class="tq-input" id="email" type="email" value="${escapeHtml(state.email)}" placeholder="例：name@example.com" />
      </div>
@@ -472,13 +475,16 @@ function render(): void {
 
   bindBack(5);
   document.querySelectorAll('input[name="contact_method"]').forEach((el) => {
-    el.addEventListener('change', (e) => {
-      const method = (e.target as HTMLInputElement).value;
-      state.contactMethod = method;
-      const phoneField = document.getElementById('phone-field');
+    el.addEventListener('change', () => {
+      state.contactMethods = [
+        ...document.querySelectorAll<HTMLInputElement>('input[name="contact_method"]:checked'),
+      ].map((x) => x.value);
+      const phoneLabel = document.querySelector('#phone-field .tq-label');
       const emailField = document.getElementById('email-field');
-      if (phoneField) phoneField.style.display = needsPhone(method) ? '' : 'none';
-      if (emailField) emailField.style.display = needsEmail(method) ? '' : 'none';
+      if (phoneLabel) {
+        phoneLabel.innerHTML = `お電話番号${needsPhone(state.contactMethods) ? ' <span class="tq-required">*</span>' : ''}`;
+      }
+      if (emailField) emailField.style.display = needsEmail(state.contactMethods) ? '' : 'none';
     });
   });
   document.getElementById('privacy-consent')?.addEventListener('change', (e) => {
@@ -504,26 +510,26 @@ async function lookupZipAndFill(): Promise<void> {
 }
 
 function collectStep6(): boolean {
-  const contact = document.querySelector<HTMLInputElement>('input[name="contact_method"]:checked');
+  const contactChecked = [...document.querySelectorAll<HTMLInputElement>('input[name="contact_method"]:checked')];
   const fire = document.querySelector<HTMLInputElement>('input[name="fire_insurance"]:checked');
   const privacy = document.getElementById('privacy-consent') as HTMLInputElement | null;
 
-  if (!contact || !fire) {
+  if (contactChecked.length === 0 || !fire) {
     showError('必須項目を選択してください');
     return false;
   }
 
-  state.contactMethod = contact.value;
+  state.contactMethods = contactChecked.map((x) => x.value);
   state.phone = (document.getElementById('phone') as HTMLInputElement).value.trim();
   state.email = (document.getElementById('email') as HTMLInputElement).value.trim();
   state.fireInsurance = fire.value;
   state.privacyConsent = privacy?.checked ?? false;
 
-  if (needsPhone(state.contactMethod) && !state.phone) {
+  if (needsPhone(state.contactMethods) && !state.phone) {
     showError('お電話番号を入力してください');
     return false;
   }
-  if (needsEmail(state.contactMethod) && !state.email) {
+  if (needsEmail(state.contactMethods) && !state.email) {
     showError('メールアドレスを入力してください');
     return false;
   }
@@ -536,9 +542,10 @@ function collectStep6(): boolean {
 }
 
 function buildSubmissionData(): Record<string, string> {
+  const hasFreeInputArea = needsAreaDetail(state.targetAreas);
   const data: Record<string, string> = {
     consultation_type: state.consultationType,
-    target_areas: state.targetAreas.join('、'),
+    target_areas: formatTargetAreasForSubmission(state.targetAreas, state.targetAreaDetail),
     customer_type: state.customerType,
     housing_type: state.housingType,
     under_construction: state.underConstruction,
@@ -549,11 +556,14 @@ function buildSubmissionData(): Record<string, string> {
     deadline_preference: state.deadlinePreference,
     request_preference: state.requestPreference,
     first_time_repair: state.firstTimeRepair,
-    contact_method: state.contactMethod,
+    contact_method: state.contactMethods.join('、'),
     fire_insurance: state.fireInsurance,
     privacy_consent: '同意済み',
   };
-  if (state.targetAreaDetail) data.target_area_detail = state.targetAreaDetail;
+  // 詳細は target_areas に統合済みのため、自由入力選択時は別フィールドに重複保存しない
+  if (state.targetAreaDetail && !hasFreeInputArea) {
+    data.target_area_detail = state.targetAreaDetail;
+  }
   if (state.postalCode) data.postal_code = state.postalCode;
   if (state.address) data.address = state.address;
   if (state.specificDeadlineDate) data.specific_deadline_date = state.specificDeadlineDate;
