@@ -34,7 +34,13 @@ export const HOUSING_TYPES = [
   '持家（マンション）',
   '賃貸・借家',
   '店舗',
+] as const;
+
+export const DAMAGE_CAUSES = [
   '業者様がお客様先で傷をつけてしまったケース',
+  'お客様ご自身で傷をつけてしまったケース',
+  '経年劣化',
+  'その他',
 ] as const;
 
 export const UNDER_CONSTRUCTION_OPTIONS = ['はい', 'いいえ', 'わからない'] as const;
@@ -69,6 +75,7 @@ export const TACTEQ_FIELD_LABELS: Record<string, string> = {
   target_area_detail: '対象箇所（詳細）',
   customer_type: 'お客様区分',
   housing_type: 'お住まいの種類',
+  damage_cause: '原因は？',
   under_construction: '工事中の物件',
   customer_name: 'お名前',
   furigana: 'フリガナ',
@@ -95,6 +102,7 @@ export const TACTEQ_FIELD_ORDER = [
   'target_area_detail',
   'customer_type',
   'housing_type',
+  'damage_cause',
   'under_construction',
   'customer_name',
   'furigana',

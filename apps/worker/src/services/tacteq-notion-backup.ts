@@ -15,6 +15,7 @@ const NOTION_FIELD_MAP: Record<string, string> = {
   '対象箇所（詳細）': 'target_area_detail',
   お客様区分: 'customer_type',
   お住まいの種類: 'housing_type',
+  '原因は？': 'damage_cause',
   工事中の物件: 'under_construction',
   フリガナ: 'furigana',
   郵便番号: 'postal_code',
