@@ -8,6 +8,7 @@ import {
   CONSULTATION_TYPES,
   CUSTOMER_TYPES,
   HOUSING_TYPES,
+  DAMAGE_CAUSES,
   UNDER_CONSTRUCTION_OPTIONS,
   DEADLINE_OPTIONS,
   REQUEST_PREFERENCES,
@@ -39,6 +40,7 @@ interface WizardState {
   targetAreaDetail: string;
   customerType: string;
   housingType: string;
+  damageCause: string;
   underConstruction: string;
   customerName: string;
   furigana: string;
@@ -69,6 +71,7 @@ const state: WizardState = {
   targetAreaDetail: '',
   customerType: '',
   housingType: '',
+  damageCause: '',
   underConstruction: '',
   customerName: '',
   furigana: '',
@@ -309,6 +312,10 @@ function render(): void {
          <div class="tq-options">${renderRadioOptions('housing_type', HOUSING_TYPES, state.housingType)}</div>
        </div>
        <div class="tq-field">
+         <p class="tq-label">原因は？ <span class="tq-required">*</span></p>
+         <div class="tq-options">${renderRadioOptions('damage_cause', DAMAGE_CAUSES, state.damageCause)}</div>
+       </div>
+       <div class="tq-field">
          <p class="tq-label">工事中の物件ですか？ <span class="tq-required">*</span></p>
          <div class="tq-options">${renderRadioOptions('under_construction', UNDER_CONSTRUCTION_OPTIONS, state.underConstruction)}</div>
        </div>`,
@@ -319,13 +326,15 @@ function render(): void {
     bindNext(() => {
       const customer = document.querySelector<HTMLInputElement>('input[name="customer_type"]:checked');
       const housing = document.querySelector<HTMLInputElement>('input[name="housing_type"]:checked');
+      const damageCause = document.querySelector<HTMLInputElement>('input[name="damage_cause"]:checked');
       const construction = document.querySelector<HTMLInputElement>('input[name="under_construction"]:checked');
-      if (!customer || !housing || !construction) {
+      if (!customer || !housing || !damageCause || !construction) {
         showError('必須項目を選択してください');
         return false;
       }
       state.customerType = customer.value;
       state.housingType = housing.value;
+      state.damageCause = damageCause.value;
       state.underConstruction = construction.value;
       clearError();
       return true;
@@ -548,6 +557,7 @@ function buildSubmissionData(): Record<string, string> {
     target_areas: formatTargetAreasForSubmission(state.targetAreas, state.targetAreaDetail),
     customer_type: state.customerType,
     housing_type: state.housingType,
+    damage_cause: state.damageCause,
     under_construction: state.underConstruction,
     customer_name: state.customerName,
     furigana: state.furigana,

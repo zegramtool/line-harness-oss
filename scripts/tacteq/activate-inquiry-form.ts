@@ -19,6 +19,7 @@ const FORM_FIELDS = [
   { name: 'target_area_detail', label: '対象箇所（詳細）', type: 'text', required: false },
   { name: 'customer_type', label: 'お客様区分', type: 'text', required: true },
   { name: 'housing_type', label: 'お住まいの種類', type: 'text', required: true },
+  { name: 'damage_cause', label: '原因は？', type: 'text', required: true },
   { name: 'under_construction', label: '工事中の物件', type: 'text', required: true },
   { name: 'customer_name', label: 'お名前', type: 'text', required: true },
   { name: 'furigana', label: 'フリガナ', type: 'text', required: true },

@@ -17,6 +17,7 @@
     "tacteq:activate-inquiry-form": "tsx scripts/tacteq/activate-inquiry-form.ts",
     "tacteq:activate-form-notification": "tsx scripts/tacteq/activate-form-notification.ts",
     "tacteq:activate-notion-backup": "tsx scripts/tacteq/activate-notion-backup.ts",
+    "tacteq:sync-notion-schema": "tsx scripts/tacteq/activate-notion-backup.ts --sync-schema",
     "tacteq:backfill-notion": "tsx scripts/tacteq/backfill-notion-submissions.ts",
     "tacteq:activate-welcome": "tsx scripts/tacteq/activate-welcome.ts",
     "tacteq:upload-welcome-image": "tsx scripts/tacteq/upload-welcome-image.ts",
