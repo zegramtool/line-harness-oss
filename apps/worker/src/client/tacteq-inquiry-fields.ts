@@ -32,7 +32,7 @@ export const CUSTOMER_TYPES = ['業者様', '個人様'] as const;
 export const HOUSING_TYPES = [
   '持家（戸建て）',
   '持家（マンション）',
-  '（賃貸・借家）',
+  '賃貸・借家',
   '店舗',
   '業者様がお客様先で傷をつけてしまったケース',
 ] as const;
