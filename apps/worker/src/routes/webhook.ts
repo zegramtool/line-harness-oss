@@ -280,12 +280,13 @@ async function handleEvent(
                     await completeFriendScenario(db, friendScenario.id);
                   }
 
-                  const lastStep = prepared[prepared.length - 1]?.step;
-                  if (lastStep?.on_reach_tag_id) {
-                    try {
-                      await addTagToFriend(db, friend.id, lastStep.on_reach_tag_id);
-                    } catch (err) {
-                      console.error(`[scenario] tag attach failed step=${lastStep.id}:`, err);
+                  for (const item of prepared) {
+                    if (item.step.on_reach_tag_id) {
+                      try {
+                        await addTagToFriend(db, friend.id, item.step.on_reach_tag_id);
+                      } catch (err) {
+                        console.error(`[scenario] tag attach failed step=${item.step.id}:`, err);
+                      }
                     }
                   }
                 }

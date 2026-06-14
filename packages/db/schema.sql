@@ -626,7 +626,16 @@ CREATE TABLE IF NOT EXISTS staff_members (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
 
--- Reusable message templates (text or Flex) for reward messages in campaigns
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token       TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_staff ON admin_sessions(staff_id);
+
+-- Reusable message templates
 CREATE TABLE IF NOT EXISTS message_templates (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

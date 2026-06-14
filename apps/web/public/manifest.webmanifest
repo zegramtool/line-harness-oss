@@ -1,0 +1,19 @@
+{
+  "name": "TacTeQ チャット",
+  "short_name": "チャット",
+  "description": "LINE公式アカウント 個別チャット",
+  "start_url": "/chats/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#06C755",
+  "icons": [
+    {
+      "src": "/icons/chat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -93,17 +93,99 @@ export async function getChatById(db: D1Database, id: string): Promise<ChatRow |
 }
 
 export async function getChatByFriendId(db: D1Database, friendId: string): Promise<ChatRow | null> {
-  return db.prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`).bind(friendId).first<ChatRow>();
+  return consolidateChatsForFriend(db, friendId);
+}
+
+/**
+ * 同一 friend に chats 行が複数あると、保存先と表示先がずれる。
+ * 1行に統合し、オペレーター更新 (status/notes) を優先してマージする。
+ */
+const CHAT_STATUS_PRIORITY: Record<string, number> = {
+  in_progress: 3,
+  unread: 2,
+  resolved: 1,
+};
+
+function pickMergedChatFields(rows: ChatRow[]): {
+  status: string;
+  notes: string | null;
+  operatorId: string | null;
+} {
+  const byUpdated = [...rows].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+
+  let status = byUpdated[0]?.status ?? 'resolved';
+  let statusPriority = CHAT_STATUS_PRIORITY[status] ?? 0;
+  for (const row of rows) {
+    const p = CHAT_STATUS_PRIORITY[row.status] ?? 0;
+    if (p > statusPriority) {
+      status = row.status;
+      statusPriority = p;
+    }
+  }
+
+  let notes: string | null = null;
+  for (const row of byUpdated) {
+    if (row.notes != null && row.notes !== '') {
+      notes = row.notes;
+      break;
+    }
+  }
+
+  let operatorId: string | null = null;
+  for (const row of byUpdated) {
+    if (row.operator_id) {
+      operatorId = row.operator_id;
+      break;
+    }
+  }
+
+  return { status, notes, operatorId };
+}
+
+export async function consolidateChatsForFriend(db: D1Database, friendId: string): Promise<ChatRow | null> {
+  const { results } = await db
+    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY updated_at DESC, created_at DESC`)
+    .bind(friendId)
+    .all<ChatRow>();
+
+  if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
+
+  const canonical = results[0];
+  const merged = pickMergedChatFields(results);
+
+  for (const row of results.slice(1)) {
+    await db.prepare(`DELETE FROM chats WHERE id = ?`).bind(row.id).run();
+  }
+
+  const needsUpdate =
+    merged.status !== canonical.status ||
+    merged.notes !== canonical.notes ||
+    merged.operatorId !== canonical.operator_id;
+
+  if (needsUpdate) {
+    await updateChat(db, canonical.id, {
+      status: merged.status,
+      notes: merged.notes ?? '',
+      operatorId: merged.operatorId,
+    });
+    return (await getChatById(db, canonical.id))!;
+  }
+
+  return canonical;
 }
 
 export async function createChat(
   db: D1Database,
-  input: { friendId: string; operatorId?: string },
+  input: { friendId: string; operatorId?: string; status?: string },
 ): Promise<ChatRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO chats (id, friend_id, operator_id, last_message_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.friendId, input.operatorId ?? null, now, now, now).run();
+  const status = input.status ?? 'unread';
+  await db.prepare(
+    `INSERT INTO chats (id, friend_id, operator_id, status, last_message_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(id, input.friendId, input.operatorId ?? null, status, now, now, now).run();
   return (await getChatById(db, id))!;
 }
 

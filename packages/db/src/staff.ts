@@ -1,4 +1,5 @@
 import { jstNow } from './utils.js';
+import { revokeAdminSessionsForStaff } from './admin-sessions.js';
 
 export interface StaffMember {
   id: string;
@@ -117,6 +118,7 @@ export async function regenerateStaffApiKey(db: D1Database, id: string): Promise
   if (result.meta.changes === 0) {
     throw new Error(`Staff member not found: ${id}`);
   }
+  await revokeAdminSessionsForStaff(db, id);
   return newKey;
 }
 

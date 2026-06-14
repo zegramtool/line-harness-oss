@@ -10,6 +10,12 @@ import {
   expiredCookie,
 } from '../middleware/auth.js';
 import { resolveAdminAuthConfig } from '../middleware/admin-auth-config.js';
+import {
+  createAdminSession,
+  purgeExpiredAdminSessions,
+  revokeAdminSession,
+  isAdminSessionToken,
+} from '@line-crm/db';
 
 export const adminAuth = new Hono<Env>();
 
@@ -34,8 +40,8 @@ adminAuth.post('/api/auth/login', async (c) => {
   }
 
   const body = await c.req
-    .json<{ apiKey?: string }>()
-    .catch(() => ({}) as { apiKey?: string });
+    .json<{ apiKey?: string; preferBearer?: boolean }>()
+    .catch(() => ({}) as { apiKey?: string; preferBearer?: boolean });
   const apiKey = body.apiKey?.trim() ?? '';
   const staff = await authenticateApiToken(c, apiKey || null);
 
@@ -46,7 +52,14 @@ adminAuth.post('/api/auth/login', async (c) => {
   const csrfToken = crypto.randomUUID();
   c.header('Set-Cookie', adminSessionCookie(apiKey, config.sameSite), { append: true });
   c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
-  return c.json({ success: true, data: staff, csrfToken });
+
+  let sessionToken: string | undefined;
+  if (body.preferBearer) {
+    await purgeExpiredAdminSessions(c.env.DB);
+    sessionToken = await createAdminSession(c.env.DB, staff.id);
+  }
+
+  return c.json({ success: true, data: staff, csrfToken, sessionToken });
 });
 
 /**
@@ -56,6 +69,12 @@ adminAuth.post('/api/auth/login', async (c) => {
  */
 adminAuth.post('/api/auth/logout', async (c) => {
   const { sameSite } = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });
+  const authHeader = c.req.header('Authorization');
+  const bearer =
+    authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
+  if (bearer && isAdminSessionToken(bearer)) {
+    await revokeAdminSession(c.env.DB, bearer);
+  }
   c.header('Set-Cookie', expiredCookie(ADMIN_AUTH_COOKIE, sameSite), { append: true });
   c.header('Set-Cookie', expiredCookie(CSRF_COOKIE, sameSite), { append: true });
   return c.json({ success: true, data: null });

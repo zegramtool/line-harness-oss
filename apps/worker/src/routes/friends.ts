@@ -145,7 +145,7 @@ friends.get('/api/friends', async (c) => {
         `COALESCE(
            (SELECT status FROM chats c
             WHERE c.friend_id = f.id
-            ORDER BY c.created_at DESC LIMIT 1),
+            ORDER BY c.updated_at DESC, c.created_at DESC LIMIT 1),
            'resolved'
          ) = 'unread'`,
       );
@@ -194,7 +194,7 @@ friends.get('/api/friends', async (c) => {
          COALESCE(
            (SELECT status FROM chats c
             WHERE c.friend_id = f.id
-            ORDER BY c.created_at DESC LIMIT 1),
+            ORDER BY c.updated_at DESC, c.created_at DESC LIMIT 1),
            'resolved'
          ) AS chat_status`
       : `f.*`;

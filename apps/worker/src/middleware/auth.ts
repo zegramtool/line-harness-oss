@@ -1,5 +1,11 @@
 import type { Context, Next } from 'hono';
-import { getStaffByApiKey } from '@line-crm/db';
+import {
+  getStaffByApiKey,
+  getStaffById,
+  getAdminSession,
+  isAdminSessionToken,
+  revokeAdminSession,
+} from '@line-crm/db';
 import type { Env } from '../index.js';
 import type { AdminSameSite } from './admin-auth-config.js';
 
@@ -100,6 +106,20 @@ export async function authenticateApiToken(
   token: string | null,
 ): Promise<AuthenticatedStaff | null> {
   if (!token) return null;
+
+  if (isAdminSessionToken(token)) {
+    const session = await getAdminSession(c.env.DB, token);
+    if (!session) return null;
+    if (session.staff_id === 'env-owner') {
+      return { id: 'env-owner', name: 'Owner', role: 'owner' };
+    }
+    const staff = await getStaffById(c.env.DB, session.staff_id);
+    if (!staff || staff.is_active !== 1) {
+      await revokeAdminSession(c.env.DB, token);
+      return null;
+    }
+    return { id: staff.id, name: staff.name, role: staff.role };
+  }
 
   const staff = await getStaffByApiKey(c.env.DB, token);
   if (staff) {

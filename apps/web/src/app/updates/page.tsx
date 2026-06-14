@@ -1,9 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL!
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY!
+import { fetchApi } from '@/lib/api'
 
 interface Row {
   id: string
@@ -17,34 +15,39 @@ interface Row {
 }
 
 async function fetchHistory(): Promise<Row[]> {
-  const r = await fetch(`${API_URL}/admin/update/history`, {
-    headers: { 'x-admin-api-key': ADMIN_KEY },
-  })
-  if (!r.ok) throw new Error(`history fetch ${r.status}`)
-  const j = (await r.json()) as { history: Row[] }
-  return j.history
+  const res = await fetchApi<{ success: boolean; data: { history: Row[] } }>(
+    '/api/updates/history',
+  )
+  return res.data.history
 }
 
 export default function UpdatesPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchHistory()
       .then(setRows)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false))
   }, [])
 
   return (
     <div className="max-w-3xl mx-auto p-6">
-      <h1 className="text-xl font-semibold mb-4">アップデート履歴</h1>
+      <h1 className="text-xl font-semibold mb-2">アップデート履歴</h1>
+      <p className="text-sm text-gray-500 mb-4">
+        Harness 組み込みの自動アップデート機能の実行履歴です。TacTeQ はフォーク運用のため手動デプロイしており、履歴が空なのは正常です。
+      </p>
       {error && (
         <div className="text-red-700 bg-red-50 p-3 rounded mb-4 text-sm">
           履歴取得に失敗: {error}
         </div>
       )}
-      {!error && rows.length === 0 && (
-        <p className="text-gray-500 text-sm">履歴はまだありません。</p>
+      {!error && !loading && rows.length === 0 && (
+        <p className="text-gray-500 text-sm">
+          履歴はまだありません（自動アップデート未使用）。
+        </p>
       )}
       {rows.length > 0 && (
         <div className="overflow-x-auto">

@@ -12,6 +12,7 @@ import {
   getFriendById,
   getLineAccountById,
   updateChat,
+  consolidateChatsForFriend,
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -64,14 +65,14 @@ type ChatLike = {
 // （jstNow を入れると一覧並び順が壊れるため）。
 async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike | null> {
   const existing = await getChatById(db, id);
-  if (existing) return existing as ChatLike;
+  if (existing) {
+    const merged = await consolidateChatsForFriend(db, existing.friend_id);
+    return (merged ?? existing) as ChatLike;
+  }
   const friend = await getFriendById(db, id);
   if (!friend) return null;
-  const byFriend = await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
-    .bind(friend.id)
-    .first<ChatLike>();
-  if (byFriend) return byFriend;
+  const byFriend = await consolidateChatsForFriend(db, friend.id);
+  if (byFriend) return byFriend as ChatLike;
 
   const lastMsg = await db
     .prepare(
@@ -91,10 +92,7 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
     )
     .bind(newId, friend.id, lastMessageAt, now, now, friend.id)
     .run();
-  return (await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
-    .bind(friend.id)
-    .first<ChatLike>())!;
+  return (await consolidateChatsForFriend(db, friend.id))! as ChatLike;
 }
 
 async function resolveFriendAndAccessToken(
@@ -274,6 +272,33 @@ chats.get('/api/chats', async (c) => {
           COALESCE(ri.created_at, ra.created_at) AS preview_at
         FROM (SELECT * FROM ranked_any WHERE rn = 1) ra
         LEFT JOIN (SELECT * FROM ranked_in WHERE rn = 1) ri ON ra.friend_id = ri.friend_id
+      ),
+      -- consolidateChatsForFriend と同じ優先度で status/notes/operator をマージ（一覧と詳細のズレ防止）
+      chat_merged AS (
+        SELECT
+          friend_id,
+          MAX(CASE status
+            WHEN 'in_progress' THEN 3
+            WHEN 'unread' THEN 2
+            WHEN 'resolved' THEN 1
+            ELSE 0
+          END) AS status_rank,
+          MAX(updated_at) AS updated_at,
+          MIN(created_at) AS created_at
+        FROM chats
+        GROUP BY friend_id
+      ),
+      chat_notes AS (
+        SELECT friend_id, notes,
+          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY updated_at DESC) AS rn
+        FROM chats
+        WHERE notes IS NOT NULL AND notes != ''
+      ),
+      chat_operator AS (
+        SELECT friend_id, operator_id,
+          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY updated_at DESC) AS rn
+        FROM chats
+        WHERE operator_id IS NOT NULL
       )
       SELECT
         f.id AS id,
@@ -282,9 +307,13 @@ chats.get('/api/chats', async (c) => {
         f.picture_url,
         f.line_user_id,
         f.line_account_id,
-        c.operator_id,
-        COALESCE(c.status, 'resolved') AS status,
-        c.notes,
+        co.operator_id,
+        CASE COALESCE(cm.status_rank, 1)
+          WHEN 3 THEN 'in_progress'
+          WHEN 2 THEN 'unread'
+          ELSE 'resolved'
+        END AS status,
+        cn.notes,
         -- last_message_at は preview メッセージの時刻に揃える (一覧 row の時刻表示と preview が
         -- 別メッセージを指す mismatch を防ぐ)。preview が無い (chats 行のみ存在) ケースは
         -- d.last_message_at にフォールバック。
@@ -292,13 +321,13 @@ chats.get('/api/chats', async (c) => {
         rm.content AS last_message_content,
         rm.direction AS last_message_direction,
         rm.message_type AS last_message_type,
-        COALESCE(c.created_at, d.last_message_at) AS created_at,
-        COALESCE(c.updated_at, d.last_message_at) AS updated_at
+        COALESCE(cm.created_at, d.last_message_at) AS created_at,
+        COALESCE(cm.updated_at, d.last_message_at) AS updated_at
       FROM deduped d
       INNER JOIN friends f ON f.id = d.friend_id
-      LEFT JOIN chats c ON c.id = (
-        SELECT id FROM chats WHERE friend_id = f.id ORDER BY created_at DESC LIMIT 1
-      )
+      LEFT JOIN chat_merged cm ON cm.friend_id = f.id
+      LEFT JOIN chat_notes cn ON cn.friend_id = f.id AND cn.rn = 1
+      LEFT JOIN chat_operator co ON co.friend_id = f.id AND co.rn = 1
       LEFT JOIN recent_msg rm ON rm.friend_id = f.id
     `;
     // accountFilterSql に '?' が複数 (4 箇所) あるので、bindings は事前に積んでおく。
@@ -309,11 +338,15 @@ chats.get('/api/chats', async (c) => {
     const bindings: unknown[] = [];
 
     if (status) {
-      conditions.push(`COALESCE(c.status, 'resolved') = ?`);
+      conditions.push(`CASE COALESCE(cm.status_rank, 1)
+        WHEN 3 THEN 'in_progress'
+        WHEN 2 THEN 'unread'
+        ELSE 'resolved'
+      END = ?`);
       bindings.push(status);
     }
     if (operatorId) {
-      conditions.push('c.operator_id = ?');
+      conditions.push('co.operator_id = ?');
       bindings.push(operatorId);
     }
     if (lineAccountId) {
@@ -373,13 +406,9 @@ chats.get('/api/chats/:id', async (c) => {
       const friendRow = await getFriendById(c.env.DB, rawId);
       if (!friendRow) return c.json({ success: false, error: 'Chat not found' }, 404);
       friendId = friendRow.id;
-      // 同じ friend に紐づく chats 行があれば採用（lazy-create 後の再読みで status/notes を拾うため）
-      const existing = await c.env.DB
-        .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`)
-        .bind(friendRow.id)
-        .first<{ id: string; friend_id: string; operator_id: string | null; status: string; notes: string | null; last_message_at: string | null; created_at: string; updated_at: string }>();
-      if (existing) {
-        chatRow = existing as Awaited<ReturnType<typeof getChatById>>;
+      const merged = await consolidateChatsForFriend(c.env.DB, friendRow.id);
+      if (merged) {
+        chatRow = merged as Awaited<ReturnType<typeof getChatById>>;
       }
     }
 
@@ -405,6 +434,7 @@ chats.get('/api/chats/:id', async (c) => {
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
          WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
+           AND (source IS NULL OR source != 'inbox_ack')
          ORDER BY created_at DESC LIMIT 1000`,
       )
       .bind(resolvedFriendId)
@@ -461,8 +491,12 @@ chats.put('/api/chats/:id', async (c) => {
     const id = c.req.param('id');
     const resolved = await resolveOrCreateChat(c.env.DB, id);
     if (!resolved) return c.json({ success: false, error: 'Not found' }, 404);
-    const body = await c.req.json<{ operatorId?: string | null; status?: string; notes?: string }>();
-    await updateChat(c.env.DB, resolved.id, body);
+    const body = await c.req.json<{ operatorId?: string | null; status?: string; notes?: string | null }>();
+    const updates: Partial<{ operatorId: string | null; status: string; notes: string }> = {};
+    if (body.operatorId !== undefined) updates.operatorId = body.operatorId;
+    if (body.status !== undefined) updates.status = body.status;
+    if (body.notes !== undefined) updates.notes = body.notes ?? '';
+    await updateChat(c.env.DB, resolved.id, updates);
     const updated = await getChatById(c.env.DB, resolved.id);
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({

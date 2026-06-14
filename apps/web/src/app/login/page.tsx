@@ -1,6 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import {
+  clearClientSession,
+  establishSessionAfterLogin,
+  shouldPreferBearerAuth,
+} from '@/lib/session-auth'
 
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('')
@@ -20,46 +25,44 @@ export default function LoginPage() {
         setLoading(false)
         return
       }
-      // Exchange the API key for an HttpOnly session cookie. The key is never
-      // stored in localStorage (removes the XSS-exposed credential).
+
+      const trimmedKey = apiKey.trim()
       const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey }),
+        body: JSON.stringify({
+          apiKey: trimmedKey,
+          preferBearer: shouldPreferBearerAuth(),
+        }),
       })
 
-      if (res.ok) {
-        localStorage.removeItem('lh_api_key')
-        try {
-          const loginData = await res.json()
-          if (loginData.success && loginData.data) {
-            localStorage.setItem('lh_staff_name', loginData.data.name)
-            localStorage.setItem('lh_staff_role', loginData.data.role)
-          }
-          // Cache the CSRF token for mutating requests (double-submit).
-          if (loginData.csrfToken) {
-            localStorage.setItem('lh_csrf', loginData.csrfToken)
-          }
-        } catch {
-          // Profile / CSRF caching is best-effort.
-        }
-        router.push('/')
-      } else if (res.status === 401) {
+      if (res.status === 401) {
         setError('APIキーが正しくありません')
-      } else {
-        // Surface topology / configuration errors (e.g. cross-site cookie guard).
+        return
+      }
+
+      if (!res.ok) {
         let message = 'ログインに失敗しました'
         try {
           const data = await res.json()
           if (data?.error) message = data.error
         } catch {
-          // keep default message
+          // keep default
         }
         setError(message)
+        return
       }
-    } catch {
-      setError('接続に失敗しました')
+
+      const loginData = await res.json()
+      const mode = await establishSessionAfterLogin(apiUrl, trimmedKey, loginData)
+      if (mode === 'bearer') {
+        console.info('[auth] mobile bearer session established')
+      }
+      router.push('/')
+    } catch (err) {
+      clearClientSession()
+      setError(err instanceof Error ? err.message : '接続に失敗しました')
     } finally {
       setLoading(false)
     }
@@ -85,7 +88,10 @@ export default function LoginPage() {
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="APIキーを入力"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              autoFocus
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </div>
 
@@ -95,13 +101,17 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || !apiKey}
+            disabled={loading || !apiKey.trim()}
             className="w-full py-3 text-white font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: '#06C755' }}
           >
             {loading ? 'ログイン中...' : 'ログイン'}
           </button>
         </form>
+
+        <p className="text-xs text-gray-400 mt-4 leading-relaxed">
+          iPhone の Safari では Cookie の代わりに短命セッショントークンで認証します（タブを閉じると再ログインが必要です）。APIキー自体は端末に保存しません。
+        </p>
       </div>
     </div>
   )

@@ -96,6 +96,13 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
   });
 }
 
+/** LIFF id_token — 副作用ありフォーム submit のなりすまし防止用 */
+function submitAuthHeaders(): Record<string, string> {
+  const token = liff.getIDToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 function getApp(): HTMLElement {
   return document.getElementById('app')!;
 }
@@ -781,6 +788,7 @@ async function submitForm(): Promise<void> {
 
       const webhookSubmitRes = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
         method: 'POST',
+        headers: submitAuthHeaders(),
         body: JSON.stringify(webhookBody),
       });
       if (!webhookSubmitRes.ok) {
@@ -806,6 +814,7 @@ async function submitForm(): Promise<void> {
 
     const res = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
       method: 'POST',
+      headers: submitAuthHeaders(),
       body: JSON.stringify(body),
     });
     console.log('Response status:', res.status);

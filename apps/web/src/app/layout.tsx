@@ -5,6 +5,19 @@ import AppShell from '@/components/app-shell'
 export const metadata: Metadata = {
   title: 'L Harness',
   description: 'L Harness 管理画面',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'チャット',
+  },
+}
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover' as const,
+  themeColor: '#06C755',
 }
 
 export default function RootLayout({
