@@ -19,6 +19,7 @@ import { processDueReminders } from './services/booking-reminders.js';
 import { runExpirer } from './services/booking-expirer.js';
 import { processDueEventReminders } from './services/event-booking-reminders.js';
 import { runEventBookingExpirer } from './services/event-booking-expirer.js';
+import { purgeExpiredChatPdfs } from './services/chat-pdf-storage.js';
 import { sendEventBookingNotification } from './services/event-booking-notifier.js';
 import { sendBookingNotification } from './services/booking-notifier.js';
 import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
@@ -60,6 +61,7 @@ import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
 import { capabilities } from './routes/capabilities.js';
 import { images } from './routes/images.js';
+import { files } from './routes/files.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
 import { autoReplies } from './routes/auto-replies.js';
@@ -116,6 +118,8 @@ export type Env = {
     LIFF_PUBLIC_URL?: string;
     /** Notion Internal Integration token（TacTeQ フォームバックアップ用） */
     NOTION_API_TOKEN?: string;
+    /** チャット送信用 PDF リンクの有効日数（既定 30） */
+    CHAT_PDF_TTL_DAYS?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -132,7 +136,7 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Filename'],
   maxAge: 600,
 }));
 
@@ -177,6 +181,7 @@ app.route('/', adPlatforms);
 app.route('/', staff);
 app.route('/', capabilities);
 app.route('/', images);
+app.route('/', files);
 app.route('/', setup);
 app.route('/', autoReplies);
 app.route('/', adminAuth);
@@ -654,6 +659,17 @@ async function scheduled(
       );
     } catch (e) {
       console.error('event-booking-expirer error:', e);
+    }
+
+    try {
+      const pdfPurge = await purgeExpiredChatPdfs(env.IMAGES, new Date());
+      if (pdfPurge.deleted > 0) {
+        console.log(
+          `[chat-pdf-purge] scanned=${pdfPurge.scanned} deleted=${pdfPurge.deleted}`,
+        );
+      }
+    } catch (e) {
+      console.error('chat-pdf-purge error:', e);
     }
   }
 

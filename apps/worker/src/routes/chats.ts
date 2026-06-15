@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import { buildPdfLinkFlex } from '../services/pdf-flex-message.js';
 import {
   getOperators,
   getOperatorById,
@@ -584,6 +585,23 @@ chats.post('/api/chats/:id/send', async (c) => {
         parsed.originalContentUrl,
         parsed.previewImageUrl,
       );
+    } else if (messageType === 'file') {
+      const parsed = JSON.parse(body.content) as {
+        url: string;
+        fileName: string;
+        expiresAtLabel?: string;
+      };
+      if (!parsed.url || !parsed.fileName) {
+        return c.json({ success: false, error: 'Invalid file payload' }, 400);
+      }
+      const flex = buildPdfLinkFlex(parsed.fileName, parsed.url, parsed.expiresAtLabel);
+      await lineClient.pushFlexMessage(
+        friend.line_user_id,
+        `${parsed.fileName}（PDF）`,
+        flex,
+      );
+    } else {
+      return c.json({ success: false, error: `Unsupported message type: ${messageType}` }, 400);
     }
 
     // メッセージログに記録

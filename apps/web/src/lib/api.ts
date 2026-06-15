@@ -1242,6 +1242,37 @@ export const api = {
         body: buf,
       })
     },
+    pdf: async (file: File): Promise<ApiResponse<{
+      id: string
+      key: string
+      url: string
+      mimeType: string
+      size: number
+      fileName: string
+      expiresAt: string
+      expiresAtLabel: string
+      ttlDays: number
+    }>> => {
+      const buf = await file.arrayBuffer()
+      return fetchApi<ApiResponse<{
+        id: string
+        key: string
+        url: string
+        mimeType: string
+        size: number
+        fileName: string
+        expiresAt: string
+        expiresAtLabel: string
+        ttlDays: number
+      }>>('/api/files', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/pdf',
+          'X-Filename': encodeURIComponent(file.name || 'document.pdf'),
+        },
+        body: buf,
+      })
+    },
   },
 }
 

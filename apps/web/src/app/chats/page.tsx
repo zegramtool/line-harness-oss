@@ -41,6 +41,47 @@ interface ChatDetail extends Chat {
   messages?: ChatMessage[]
 }
 
+interface PendingPdf {
+  url: string
+  fileName: string
+  size: number
+  expiresAt: string
+  expiresAtLabel: string
+}
+
+function formatPdfSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** iOS など file.type が空になることがあるため拡張子も見る */
+function isPdfFile(file: File): boolean {
+  if (file.type === 'application/pdf') return true
+  return file.name.toLowerCase().endsWith('.pdf')
+}
+
+function PdfMessageBubble({ content, outgoing }: { content: string; outgoing?: boolean }) {
+  try {
+    const parsed = JSON.parse(content) as { url?: string; fileName?: string }
+    const label = parsed.fileName ?? 'PDF'
+    const href = parsed.url
+    if (!href) return <span>📎 {label}</span>
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={outgoing ? 'underline text-white' : 'text-green-700 underline'}
+      >
+        📎 {label}
+      </a>
+    )
+  } catch {
+    return <span>📎 PDF</span>
+  }
+}
+
 type StatusFilter = 'all' | 'unread' | 'in_progress' | 'resolved'
 
 const statusConfig: Record<Chat['status'], { label: string; className: string }> = {
@@ -348,6 +389,8 @@ export default function ChatsPage() {
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
   const [pendingImage, setPendingImage] = useState<ImageUploaderValue | null>(null)
+  const [pendingPdf, setPendingPdf] = useState<PendingPdf | null>(null)
+  const [pdfUploading, setPdfUploading] = useState(false)
   const [sending, setSending] = useState(false)
   const sendLockRef = useRef(false)
   const [notes, setNotes] = useState('')
@@ -361,6 +404,7 @@ export default function ChatsPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const pdfInputRef = useRef<HTMLInputElement>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
@@ -577,12 +621,61 @@ export default function ChatsPage() {
 
   const handleSendMessage = async () => {
     if (!selectedChatId || sending || sendLockRef.current) return
-    if (!messageContent.trim() && !pendingImage) return
+    if (!messageContent.trim() && !pendingImage && !pendingPdf) return
     const sendingChatId = selectedChatId  // capture the chat id for this send
     sendLockRef.current = true
     setSending(true)
     try {
       const now = new Date().toISOString()
+      // --- PDF send path ---
+      if (pendingPdf) {
+        const pdfPayload = JSON.stringify({
+          url: pendingPdf.url,
+          fileName: pendingPdf.fileName,
+          fileSize: pendingPdf.size,
+          expiresAt: pendingPdf.expiresAt,
+          expiresAtLabel: pendingPdf.expiresAtLabel,
+        })
+        await api.chats.send(sendingChatId, { messageType: 'file', content: pdfPayload })
+        const pdfLabel = `📎 ${pendingPdf.fileName}`
+        setPendingPdf(null)
+        setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
+          ...prev,
+          lastMessageAt: now,
+          status: 'in_progress',
+          messages: [
+            ...(prev.messages ?? []),
+            {
+              id: crypto.randomUUID(),
+              direction: 'outgoing',
+              messageType: 'file',
+              content: pdfPayload,
+              createdAt: now,
+            },
+          ],
+        } : prev)
+        setChats((prev) => {
+          const exists = prev.some((c) => c.id === sendingChatId)
+          if (!exists) return prev
+          const currentFilter = statusFilterRef.current
+          const currentUnansweredOnly = unansweredOnlyRef.current
+          const updated = prev.map((c) => c.id === sendingChatId ? {
+            ...c,
+            lastMessageAt: now,
+            status: 'in_progress' as const,
+            lastMessageContent: pdfLabel,
+            lastMessageDirection: 'outgoing' as const,
+            lastMessageType: 'file' as const,
+          } : c)
+          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
+          if (currentUnansweredOnly) filtered = filtered.filter((c) => c.id !== sendingChatId)
+          return [...filtered].sort((a, b) => {
+            const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
+            const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
+            return bt - at
+          })
+        })
+      }
       // --- Image send path (runs first when image is present) ---
       if (pendingImage && pendingImage.mode === 'line-image') {
         const imgPayload = JSON.stringify({
@@ -733,6 +826,40 @@ export default function ChatsPage() {
     }
   }
 
+  const handleMobilePdfSelect = async (file: File | undefined) => {
+    if (!file) return
+    if (!isPdfFile(file)) {
+      setError('PDF ファイルを選んでください')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setError('PDF は 20MB 以下にしてください')
+      return
+    }
+    setPdfUploading(true)
+    setError('')
+    try {
+      const res = await api.uploads.pdf(file)
+      if (!res.success) {
+        setError(res.error ?? 'アップロード失敗')
+        return
+      }
+      setPendingImage(null)
+      setPendingPdf({
+        url: res.data.url,
+        fileName: res.data.fileName || file.name || 'document.pdf',
+        size: res.data.size,
+        expiresAt: res.data.expiresAt,
+        expiresAtLabel: res.data.expiresAtLabel,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(`PDF のアップロードに失敗しました: ${msg}`)
+    } finally {
+      setPdfUploading(false)
+    }
+  }
+
   const handleMobileImageSelect = async (file: File | undefined) => {
     if (!file) return
     if (!['image/jpeg', 'image/png'].includes(file.type)) {
@@ -754,6 +881,7 @@ export default function ChatsPage() {
         originalContentUrl: res.data.url,
         previewImageUrl: res.data.url,
       })
+      setPendingPdf(null)
     } catch {
       setError('画像のアップロードに失敗しました')
     }
@@ -942,6 +1070,17 @@ export default function ChatsPage() {
             </div>
           ) : chatDetail ? (
             <>
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  void handleMobilePdfSelect(f)
+                  e.target.value = ''
+                }}
+              />
               {/* Chat Header */}
               <div className="px-2 py-2 lg:px-4 lg:py-4 border-b border-gray-200 flex items-center justify-between gap-2 bg-white shrink-0 pt-[max(8px,env(safe-area-inset-top))] lg:pt-4">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1068,6 +1207,8 @@ export default function ChatsPage() {
                       }
                     } else if (msg.messageType === 'sticker') {
                       bubbleContent = <StickerMessageImage content={msg.content} />
+                    } else if (msg.messageType === 'file') {
+                      bubbleContent = <PdfMessageBubble content={msg.content} outgoing={isOutgoing} />
                     } else {
                       bubbleContent = <span>{msg.content}</span>
                     }
@@ -1139,6 +1280,26 @@ export default function ChatsPage() {
 
               {/* Mobile composer — LINE 風 */}
               <div className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0">
+                {pdfUploading && (
+                  <div className="mb-2 px-1 text-sm text-gray-600">PDF をアップロード中...</div>
+                )}
+                {pendingPdf && (
+                  <div className="mb-2 flex items-center gap-2 px-1">
+                    <div className="flex-1 min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800">
+                      <div className="truncate">📎 {pendingPdf.fileName}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {formatPdfSize(pendingPdf.size)} · リンク期限 {pendingPdf.expiresAtLabel}まで
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPendingPdf(null)}
+                      className="text-xs text-gray-600 px-2 py-1 bg-white rounded-md border border-gray-200 shrink-0"
+                    >
+                      取消
+                    </button>
+                  </div>
+                )}
                 {pendingImage?.mode === 'line-image' && (
                   <div className="mb-2 flex items-center gap-2 px-1">
                     <img
@@ -1164,6 +1325,17 @@ export default function ChatsPage() {
                   >
                     <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => pdfInputRef.current?.click()}
+                    disabled={pdfUploading}
+                    className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-600 shrink-0 disabled:opacity-40"
+                    aria-label="PDFを添付"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                     </svg>
                   </button>
                   <input
@@ -1202,7 +1374,7 @@ export default function ChatsPage() {
                   <button
                     type="button"
                     onClick={() => void handleSendMessage()}
-                    disabled={sending || (!messageContent.trim() && !pendingImage)}
+                    disabled={sending || (!messageContent.trim() && !pendingImage && !pendingPdf)}
                     className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
                     style={{ backgroundColor: '#06C755' }}
                     aria-label="送信"
@@ -1260,9 +1432,45 @@ export default function ChatsPage() {
                   <ImageUploader
                     mode="line-image"
                     value={pendingImage}
-                    onChange={setPendingImage}
+                    onChange={(next) => {
+                      setPendingImage(next)
+                      if (next) setPendingPdf(null)
+                    }}
                     label="画像を送る (任意)"
                   />
+                </div>
+                <div className="mb-2">
+                  {pdfUploading ? (
+                    <div className="text-sm text-gray-600 px-1">PDF をアップロード中...</div>
+                  ) : pendingPdf ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                      <span className="flex-1 truncate text-gray-800">
+                        📎 {pendingPdf.fileName}
+                        <span className="block text-gray-500 text-xs mt-0.5 font-normal">
+                          {formatPdfSize(pendingPdf.size)} · リンク期限 {pendingPdf.expiresAtLabel}まで
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPendingPdf(null)}
+                        className="text-xs text-gray-600 px-2 py-1 bg-white rounded border border-gray-200"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => pdfInputRef.current?.click()}
+                        disabled={pdfUploading}
+                        className="text-sm px-3 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50"
+                      >
+                        PDFを添付
+                      </button>
+                      <span className="text-xs text-gray-500">最大 20MB · リンクは30日間有効（期限後は開けません）</span>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-end gap-2">
                   <textarea
@@ -1292,7 +1500,7 @@ export default function ChatsPage() {
                   />
                   <button
                     onClick={handleSendMessage}
-                    disabled={sending || (!messageContent.trim() && !pendingImage)}
+                    disabled={sending || (!messageContent.trim() && !pendingImage && !pendingPdf)}
                     className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
