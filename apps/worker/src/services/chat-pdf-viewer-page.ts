@@ -63,13 +63,10 @@ export function renderChatPdfViewerPage(params: ChatPdfViewerPageParams): string
       font-weight: 600;
       cursor: pointer;
       text-align: center;
-      text-decoration: none;
     }
-    .btn-primary { background: #06C755; color: #fff; margin-bottom: 10px; }
+    .btn-primary { background: #06C755; color: #fff; }
     .btn-primary:disabled { opacity: 0.6; }
-    .btn-secondary { background: #fff; color: #333; border: 1px solid #ddd; }
-    .hint { font-size: 0.75rem; color: #666; line-height: 1.5; margin: 12px 0 0; }
-    .status { font-size: 0.8rem; color: #c00; margin-top: 8px; min-height: 1.2em; }
+    .status { font-size: 0.8rem; color: #666; margin-top: 8px; min-height: 1.2em; }
   </style>
 </head>
 <body>
@@ -80,11 +77,6 @@ export function renderChatPdfViewerPage(params: ChatPdfViewerPageParams): string
   </div>
   <div class="card">
     <button type="button" class="btn btn-primary" id="saveBtn">ファイルに保存</button>
-    <a class="btn btn-secondary" id="openRaw" href="${pdfUrl}" target="_blank" rel="noopener">PDFを別タブで開く</a>
-    <p class="hint">
-      <strong>iPhone の場合:</strong> 上の緑ボタン → 共有シートで「ファイルに保存」を選ぶと PDF として保存できます。<br>
-      うまくいかない場合は「PDFを別タブで開く」→ 画面下の共有ボタン（□↑）から保存してください。
-    </p>
     <p class="status" id="status" aria-live="polite"></p>
   </div>
   <script>
@@ -93,8 +85,24 @@ export function renderChatPdfViewerPage(params: ChatPdfViewerPageParams): string
       var fileName = ${JSON.stringify(params.fileName)};
       var btn = document.getElementById('saveBtn');
       var status = document.getElementById('status');
+      var saving = false;
+
+      function downloadBlob(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+        status.textContent = 'ダウンロードを開始しました';
+      }
 
       btn.addEventListener('click', function () {
+        if (saving) return;
+        saving = true;
         status.textContent = '準備中...';
         btn.disabled = true;
         fetch(pdfUrl, { credentials: 'omit' })
@@ -105,23 +113,27 @@ export function renderChatPdfViewerPage(params: ChatPdfViewerPageParams): string
           .then(function (blob) {
             var file = new File([blob], fileName, { type: 'application/pdf' });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              return navigator.share({ files: [file], title: fileName });
+              return navigator.share({ files: [file] }).then(function () {
+                status.textContent = '';
+              }).catch(function (err) {
+                if (err && err.name === 'AbortError') {
+                  status.textContent = '';
+                  return;
+                }
+                throw err;
+              });
             }
-            var url = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            a.rel = 'noopener';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
-            status.textContent = 'ダウンロードを開始しました';
+            downloadBlob(blob);
           })
           .catch(function (err) {
+            if (err && err.name === 'AbortError') {
+              status.textContent = '';
+              return;
+            }
             status.textContent = err && err.message ? err.message : '保存に失敗しました';
           })
           .finally(function () {
+            saving = false;
             btn.disabled = false;
           });
       });

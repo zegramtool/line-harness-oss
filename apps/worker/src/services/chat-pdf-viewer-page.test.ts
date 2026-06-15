@@ -18,7 +18,8 @@ describe('renderChatPdfViewerPage', () => {
       expiresAtLabel: '2026/7/15 12:00',
     });
     expect(html).toContain('ファイルに保存');
-    expect(html).toContain('navigator.share');
-    expect(html).toContain('https://example.com/files/u/見積書.pdf');
+    expect(html).toContain('navigator.share({ files: [file] })');
+    expect(html).not.toContain('PDFを別タブで開く');
+    expect(html).not.toContain('iPhone の場合');
   });
 });
