@@ -35,6 +35,16 @@ import type {
 } from '@line-crm/shared'
 
 /** Broadcast type from API (now camelCase after worker serialization) */
+export type ScheduledChatMessage = {
+  id: string
+  friendId: string
+  messageType: string
+  messageContent: string
+  scheduledAt: string
+  status: string
+  createdAt: string
+}
+
 export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   targetType: BroadcastTargetType;
   accountIds: string[] | null;
@@ -692,11 +702,25 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    send: (id: string, data: { content: string; messageType?: string }) =>
-      fetchApi<ApiResponse<unknown>>(`/api/chats/${id}/send`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
+    send: (id: string, data: { content: string; messageType?: string; scheduledAt?: string }) =>
+      fetchApi<ApiResponse<{ sent?: boolean; scheduled?: boolean; id?: string; scheduledAt?: string; messageId?: string }>>(
+        `/api/chats/${id}/send`,
+        {
+          method: 'POST',
+          body: JSON.stringify(data),
+        },
+      ),
+    listScheduled: (id: string) =>
+      fetchApi<ApiResponse<ScheduledChatMessage[]>>(
+        `/api/chats/${id}/scheduled-messages`,
+      ),
+  },
+  scheduledMessages: {
+    cancel: (id: string) =>
+      fetchApi<ApiResponse<{ id: string; status: string }>>(
+        `/api/scheduled-messages/${id}`,
+        { method: 'DELETE' },
+      ),
   },
   reminders: {
     list: (params?: { accountId?: string }) => {

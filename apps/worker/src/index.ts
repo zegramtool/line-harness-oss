@@ -11,6 +11,7 @@ import {
 } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
+import { processScheduledMessages } from './services/scheduled-message-delivery.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
 import { refreshLineAccessTokens } from './services/token-refresh.js';
@@ -46,6 +47,7 @@ import { reminders } from './routes/reminders.js';
 import { scoring } from './routes/scoring.js';
 import { templates } from './routes/templates.js';
 import { chats } from './routes/chats.js';
+import { scheduledMessages } from './routes/scheduled-messages.js';
 import { conversations } from './routes/conversations.js';
 // notifications ルート (notification_rules CRUD + notifications 一覧) は
 // インボックス機能 (/api/inbox/unanswered) に置き換えたため削除。
@@ -169,6 +171,7 @@ app.route('/', reminders);
 app.route('/', scoring);
 app.route('/', templates);
 app.route('/', chats);
+app.route('/', scheduledMessages);
 app.route('/', conversations);
 app.route('/', stripe);
 app.route('/', health);
@@ -588,6 +591,7 @@ async function scheduled(
   jobs.push(
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
+    processScheduledMessages(env.DB, defaultLineClient),
     processReminderDeliveries(env.DB, defaultLineClient),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）

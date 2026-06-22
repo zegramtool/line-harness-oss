@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
-import { api, fetchApi } from '@/lib/api'
+import { api, fetchApi, type ScheduledChatMessage } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -100,6 +100,32 @@ const statusFilters: { key: StatusFilter; label: string }[] = [
 const SHOW_LOADING_PREF_KEY = 'lh_chat_show_loading_indicator'
 const LOADING_SECONDS_PREF_KEY = 'lh_chat_loading_seconds'
 const LOADING_REFRESH_INTERVAL_MS = 4000
+
+function defaultScheduledLocalValue(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  d.setHours(8, 0, 0, 0)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function formatScheduledAtLabel(iso: string): string {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return iso
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+}
+
+function scheduledPreviewContent(msg: ScheduledChatMessage): string {
+  if (msg.messageType === 'text') return msg.messageContent
+  if (msg.messageType === 'file') {
+    try {
+      const p = JSON.parse(msg.messageContent) as { fileName?: string }
+      return `📎 ${p.fileName ?? 'PDF'}`
+    } catch { return '📎 PDF' }
+  }
+  if (msg.messageType === 'image') return '[画像]'
+  return `[${msg.messageType}]`
+}
 
 function StickerMessageImage({ content }: { content: string }) {
   const [failed, setFailed] = useState(false)
@@ -406,6 +432,18 @@ export default function ChatsPage() {
   const imageInputRef = useRef<HTMLInputElement>(null)
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [sendTiming, setSendTiming] = useState<'now' | 'scheduled'>('now')
+  const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduledLocalValue)
+  const [pendingScheduled, setPendingScheduled] = useState<ScheduledChatMessage[]>([])
+
+  const loadPendingScheduled = useCallback(async (chatId: string) => {
+    try {
+      const res = await api.chats.listScheduled(chatId)
+      if (res.success) setPendingScheduled(res.data)
+    } catch {
+      setPendingScheduled([])
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -517,10 +555,12 @@ export default function ChatsPage() {
   useEffect(() => {
     if (selectedChatId) {
       loadChatDetail(selectedChatId)
+      void loadPendingScheduled(selectedChatId)
     } else {
       setChatDetail(null)
+      setPendingScheduled([])
     }
-  }, [selectedChatId, loadChatDetail])
+  }, [selectedChatId, loadChatDetail, loadPendingScheduled])
 
   // Surface deep-linked chats in the sidebar even when the current account
   // filter or status filter would exclude them — otherwise the user replies
@@ -619,13 +659,70 @@ export default function ChatsPage() {
     }
   }, [showLoadingIndicator, loadingSeconds])
 
+  const handleCancelScheduled = async (id: string) => {
+    try {
+      const res = await api.scheduledMessages.cancel(id)
+      if (res.success && selectedChatId) {
+        await loadPendingScheduled(selectedChatId)
+      }
+    } catch {
+      setError('予約の取消に失敗しました。')
+    }
+  }
+
   const handleSendMessage = async () => {
     if (!selectedChatId || sending || sendLockRef.current) return
     if (!messageContent.trim() && !pendingImage && !pendingPdf) return
-    const sendingChatId = selectedChatId  // capture the chat id for this send
+    const sendingChatId = selectedChatId
     sendLockRef.current = true
     setSending(true)
+    setError('')
+
     try {
+      if (sendTiming === 'scheduled') {
+        if (!scheduledAtLocal.trim()) {
+          setError('予約日時を指定してください。')
+          return
+        }
+        const scheduledAt = scheduledAtLocal.trim()
+
+        if (pendingPdf) {
+          const pdfPayload = JSON.stringify({
+            url: pendingPdf.url,
+            fileName: pendingPdf.fileName,
+            fileSize: pendingPdf.size,
+            expiresAt: pendingPdf.expiresAt,
+            expiresAtLabel: pendingPdf.expiresAtLabel,
+          })
+          await api.chats.send(sendingChatId, {
+            messageType: 'file',
+            content: pdfPayload,
+            scheduledAt,
+          })
+          setPendingPdf(null)
+        } else if (pendingImage?.mode === 'line-image') {
+          const imgPayload = JSON.stringify({
+            originalContentUrl: pendingImage.originalContentUrl,
+            previewImageUrl: pendingImage.previewImageUrl,
+          })
+          await api.chats.send(sendingChatId, {
+            messageType: 'image',
+            content: imgPayload,
+            scheduledAt,
+          })
+          setPendingImage(null)
+        } else if (messageContent.trim()) {
+          await api.chats.send(sendingChatId, {
+            content: messageContent.trim(),
+            scheduledAt,
+          })
+          setMessageContent('')
+        }
+
+        await loadPendingScheduled(sendingChatId)
+        return
+      }
+
       const now = new Date().toISOString()
       // --- PDF send path ---
       if (pendingPdf) {
@@ -1278,6 +1375,69 @@ export default function ChatsPage() {
                 </div>
               </div>
 
+              {/* 予約送信 */}
+              <div className="border-t border-gray-200 shrink-0 px-3 lg:px-4 py-2 bg-white">
+                {pendingScheduled.length > 0 && (
+                  <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="text-xs font-medium text-amber-900 mb-1">
+                      予約送信（{pendingScheduled.length}件）
+                    </div>
+                    <ul className="space-y-1">
+                      {pendingScheduled.map((item) => (
+                        <li key={item.id} className="flex items-start gap-2 text-xs text-amber-950">
+                          <span className="shrink-0 tabular-nums">{formatScheduledAtLabel(item.scheduledAt)}</span>
+                          <span className="flex-1 truncate">{scheduledPreviewContent(item)}</span>
+                          <button
+                            type="button"
+                            onClick={() => void handleCancelScheduled(item.id)}
+                            className="shrink-0 text-amber-800 underline"
+                          >
+                            取消
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-[10px] text-amber-700 mt-1">※ 指定時刻から最大5分程度で送信されます</p>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                  <span className="text-gray-500">送信:</span>
+                  <button
+                    type="button"
+                    onClick={() => setSendTiming('now')}
+                    className={`px-2 py-1 rounded-md border ${
+                      sendTiming === 'now'
+                        ? 'border-green-500 bg-green-50 text-green-800'
+                        : 'border-gray-300 bg-white'
+                    }`}
+                  >
+                    今すぐ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSendTiming('scheduled')
+                      if (!scheduledAtLocal) setScheduledAtLocal(defaultScheduledLocalValue())
+                    }}
+                    className={`px-2 py-1 rounded-md border ${
+                      sendTiming === 'scheduled'
+                        ? 'border-green-500 bg-green-50 text-green-800'
+                        : 'border-gray-300 bg-white'
+                    }`}
+                  >
+                    予約
+                  </button>
+                  {sendTiming === 'scheduled' && (
+                    <input
+                      type="datetime-local"
+                      value={scheduledAtLocal}
+                      onChange={(e) => setScheduledAtLocal(e.target.value)}
+                      className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white"
+                    />
+                  )}
+                </div>
+              </div>
+
               {/* Mobile composer — LINE 風 */}
               <div className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0">
                 {pdfUploading && (
@@ -1504,7 +1664,7 @@ export default function ChatsPage() {
                     className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
-                    {sending ? '送信中...' : '送信'}
+                    {sending ? '送信中...' : sendTiming === 'scheduled' ? '予約' : '送信'}
                   </button>
                 </div>
               </div>
