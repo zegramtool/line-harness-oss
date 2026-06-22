@@ -59,13 +59,14 @@ export async function processScheduledMessages(
   }
 
   // sending のまま stuck した行を pending に戻す（5分以上前）
-  const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+  const fiveMinAgo = new Date(Date.now() + 9 * 60 * 60_000 - 5 * 60_000);
+  const stuckThreshold = fiveMinAgo.toISOString().slice(0, -1) + '+09:00';
   const stuck = await db
     .prepare(
       `SELECT id FROM scheduled_messages
        WHERE status = 'sending' AND updated_at <= ?`,
     )
-    .bind(fiveMinAgo)
+    .bind(stuckThreshold)
     .all<{ id: string }>();
 
   for (const row of stuck.results) {

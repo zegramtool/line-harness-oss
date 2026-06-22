@@ -591,7 +591,7 @@ async function scheduled(
   jobs.push(
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
-    processScheduledMessages(env.DB, defaultLineClient),
+    processScheduledMessages(env.DB, env.LINE_CHANNEL_ACCESS_TOKEN),
     processReminderDeliveries(env.DB, defaultLineClient),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）

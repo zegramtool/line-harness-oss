@@ -13,6 +13,10 @@ describe('normalizeScheduledAtInput', () => {
     const iso = '2026-06-16T08:00:00.000+09:00';
     expect(normalizeScheduledAtInput(iso)).toBe(iso);
   });
+
+  test('converts UTC Z to JST ISO', () => {
+    expect(normalizeScheduledAtInput('2026-06-22T03:00:00.000Z')).toBe('2026-06-22T12:00:00.000+09:00');
+  });
 });
 
 describe('parseScheduledAtMs', () => {

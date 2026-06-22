@@ -1,4 +1,4 @@
-import { jstNow } from './utils.js';
+import { jstNow, toJstString } from './utils.js';
 
 export type ScheduledMessageStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled';
 export type ScheduledMessageType = 'text' | 'image' | 'flex' | 'file';
@@ -29,11 +29,15 @@ export interface CreateScheduledMessageInput {
   lineAccountId?: string | null;
 }
 
-/** datetime-local 等を JST ISO に正規化 */
+/** datetime-local / ISO 等を JST ISO（+09:00）に正規化 */
 export function normalizeScheduledAtInput(value: string): string {
   const trimmed = value.trim();
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) {
     return `${trimmed}:00.000+09:00`;
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isFinite(ms)) {
+    return toJstString(new Date(ms));
   }
   return trimmed;
 }
