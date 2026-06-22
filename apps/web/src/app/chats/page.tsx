@@ -435,6 +435,7 @@ export default function ChatsPage() {
   const [sendTiming, setSendTiming] = useState<'now' | 'scheduled'>('now')
   const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduledLocalValue)
   const [pendingScheduled, setPendingScheduled] = useState<ScheduledChatMessage[]>([])
+  const [cancellingScheduledId, setCancellingScheduledId] = useState<string | null>(null)
 
   const loadPendingScheduled = useCallback(async (chatId: string) => {
     try {
@@ -660,13 +661,24 @@ export default function ChatsPage() {
   }, [showLoadingIndicator, loadingSeconds])
 
   const handleCancelScheduled = async (id: string) => {
+    if (!window.confirm('この予約送信を取り消しますか？\n（送信前であればいつでも取消できます）')) {
+      return
+    }
+    setCancellingScheduledId(id)
+    setError('')
     try {
       const res = await api.scheduledMessages.cancel(id)
-      if (res.success && selectedChatId) {
+      if (!res.success) {
+        setError('予約の取消に失敗しました。')
+        return
+      }
+      if (selectedChatId) {
         await loadPendingScheduled(selectedChatId)
       }
     } catch {
       setError('予約の取消に失敗しました。')
+    } finally {
+      setCancellingScheduledId(null)
     }
   }
 
@@ -1379,25 +1391,33 @@ export default function ChatsPage() {
               <div className="border-t border-gray-200 shrink-0 px-3 lg:px-4 py-2 bg-white">
                 {pendingScheduled.length > 0 && (
                   <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                    <div className="text-xs font-medium text-amber-900 mb-1">
-                      予約送信（{pendingScheduled.length}件）
+                    <div className="text-xs font-medium text-amber-900 mb-1.5">
+                      予約中のメッセージ（{pendingScheduled.length}件）
                     </div>
-                    <ul className="space-y-1">
+                    <ul className="space-y-2">
                       {pendingScheduled.map((item) => (
-                        <li key={item.id} className="flex items-start gap-2 text-xs text-amber-950">
-                          <span className="shrink-0 tabular-nums">{formatScheduledAtLabel(item.scheduledAt)}</span>
-                          <span className="flex-1 truncate">{scheduledPreviewContent(item)}</span>
+                        <li
+                          key={item.id}
+                          className="flex items-start gap-2 rounded-md border border-amber-100 bg-white/80 px-2 py-1.5 text-xs text-amber-950"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium tabular-nums text-amber-900">
+                              {formatScheduledAtLabel(item.scheduledAt)}
+                            </div>
+                            <div className="truncate text-amber-950/90">{scheduledPreviewContent(item)}</div>
+                          </div>
                           <button
                             type="button"
                             onClick={() => void handleCancelScheduled(item.id)}
-                            className="shrink-0 text-amber-800 underline"
+                            disabled={cancellingScheduledId === item.id}
+                            className="shrink-0 rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                           >
-                            取消
+                            {cancellingScheduledId === item.id ? '取消中...' : '予約取消'}
                           </button>
                         </li>
                       ))}
                     </ul>
-                    <p className="text-[10px] text-amber-700 mt-1">※ 指定時刻から最大5分程度で送信されます</p>
+                    <p className="text-[10px] text-amber-700 mt-1.5">※ 指定時刻から最大5分程度で送信されます</p>
                   </div>
                 )}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
