@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getOperators,
   getOperatorById,
@@ -14,7 +13,14 @@ import {
   updateChat,
   consolidateChatsForFriend,
   jstNow,
+  createScheduledMessage,
+  parseScheduledAtMs,
+  getPendingScheduledMessagesForFriend,
 } from '@line-crm/db';
+import {
+  logOutgoingFriendMessage,
+  pushMessageToFriend,
+} from '../services/push-friend-message.js';
 import type { Env } from '../index.js';
 
 const chats = new Hono<Env>();
@@ -547,14 +553,14 @@ chats.post('/api/chats/:id/loading', async (c) => {
   }
 });
 
-// オペレーターからメッセージ送信
+// オペレーターからメッセージ送信（即時 or 予約）
 chats.post('/api/chats/:id/send', async (c) => {
   try {
     const chatId = c.req.param('id');
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
+    const body = await c.req.json<{ messageType?: string; content: string; scheduledAt?: string }>();
     if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
 
     const { friend, accessToken } = await resolveFriendAndAccessToken(
@@ -564,41 +570,73 @@ chats.post('/api/chats/:id/send', async (c) => {
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
-    // LINE APIでメッセージ送信
-    const { LineClient } = await import('@line-crm/line-sdk');
-    const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
+    const lineAccountId = (friend as { line_account_id?: string | null }).line_account_id ?? null;
 
-    if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
-    } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
-    } else if (messageType === 'image') {
-      const parsed = JSON.parse(body.content) as {
-        originalContentUrl: string;
-        previewImageUrl: string;
-      };
-      await lineClient.pushImageMessage(
-        friend.line_user_id,
-        parsed.originalContentUrl,
-        parsed.previewImageUrl,
-      );
+    if (body.scheduledAt?.trim()) {
+      const scheduledMs = parseScheduledAtMs(body.scheduledAt);
+      if (!Number.isFinite(scheduledMs)) {
+        return c.json({ success: false, error: 'Invalid scheduledAt' }, 400);
+      }
+      if (scheduledMs <= Date.now()) {
+        return c.json({ success: false, error: 'scheduledAt must be in the future' }, 400);
+      }
+
+      const scheduled = await createScheduledMessage(c.env.DB, {
+        friendId: friend.id,
+        chatId: chat.id,
+        messageType: messageType as 'text' | 'image' | 'flex' | 'file',
+        messageContent: body.content,
+        scheduledAt: body.scheduledAt,
+        lineAccountId,
+      });
+
+      return c.json({
+        success: true,
+        data: {
+          scheduled: true,
+          id: scheduled.id,
+          scheduledAt: scheduled.scheduled_at,
+        },
+      });
     }
 
-    // メッセージログに記録
-    const logId = crypto.randomUUID();
-    await c.env.DB
-      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?)`)
-      .bind(logId, friend.id, messageType, body.content, jstNow())
-      .run();
+    const { LineClient } = await import('@line-crm/line-sdk');
+    const lineClient = new LineClient(accessToken);
+    await pushMessageToFriend(lineClient, friend.line_user_id, messageType, body.content);
 
-    // チャットの最終メッセージ日時を更新（chat.id を直接使う — friend_id で呼ばれても resolveOrCreateChat 済み）
+    const logId = await logOutgoingFriendMessage(c.env.DB, friend.id, messageType, body.content, 'manual');
     await updateChat(c.env.DB, chat.id, { status: 'in_progress', lastMessageAt: jstNow() });
 
     return c.json({ success: true, data: { sent: true, messageId: logId } });
   } catch (err) {
     console.error('POST /api/chats/:id/send error:', err);
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    return c.json({ success: false, error: message }, 500);
+  }
+});
+
+// 予約送信一覧（pending）
+chats.get('/api/chats/:id/scheduled-messages', async (c) => {
+  try {
+    const chat = await resolveOrCreateChat(c.env.DB, c.req.param('id'));
+    if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
+
+    const rows = await getPendingScheduledMessagesForFriend(c.env.DB, chat.friend_id);
+    return c.json({
+      success: true,
+      data: rows.map((r) => ({
+        id: r.id,
+        friendId: r.friend_id,
+        messageType: r.message_type,
+        messageContent: r.message_content,
+        scheduledAt: r.scheduled_at,
+        status: r.status,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('GET /api/chats/:id/scheduled-messages error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

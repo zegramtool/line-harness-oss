@@ -165,7 +165,9 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
       !path.startsWith('/t/') &&
       !path.startsWith('/r/') &&
       !path.startsWith('/pool/') &&
-      !path.startsWith('/images/')
+      !path.startsWith('/images/') &&
+      !path.startsWith('/files/') &&
+      !path.startsWith('/pdf/')
     ) {
       return next();
     }
@@ -179,6 +181,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.startsWith('/r/') ||
     path.startsWith('/pool/') ||
     path.startsWith('/images/') ||
+    path.startsWith('/files/') ||
+    path.startsWith('/pdf/') ||
     // 画像 src として <img> 経由でブラウザが取得するため (Authorization ヘッダ不可)。
     // R2 key 内に group_id / page_id (UUID) が含まれるので推測困難。draft 画像も
     // 最終的に LINE 上で公開されるため機密性は低い。
