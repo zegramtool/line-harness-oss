@@ -19,6 +19,8 @@ import {
 } from '@line-crm/db';
 import {
   logOutgoingFriendMessage,
+  logOutgoingFriendImages,
+  parseImagePayloads,
   pushMessageToFriend,
 } from '../services/push-friend-message.js';
 import type { Env } from '../index.js';
@@ -605,7 +607,14 @@ chats.post('/api/chats/:id/send', async (c) => {
     const lineClient = new LineClient(accessToken);
     await pushMessageToFriend(lineClient, friend.line_user_id, messageType, body.content);
 
-    const logId = await logOutgoingFriendMessage(c.env.DB, friend.id, messageType, body.content, 'manual');
+    let logId: string;
+    if (messageType === 'image') {
+      const images = parseImagePayloads(body.content);
+      const logIds = await logOutgoingFriendImages(c.env.DB, friend.id, images, 'manual');
+      logId = logIds[0] ?? '';
+    } else {
+      logId = await logOutgoingFriendMessage(c.env.DB, friend.id, messageType, body.content, 'manual');
+    }
     await updateChat(c.env.DB, chat.id, { status: 'in_progress', lastMessageAt: jstNow() });
 
     return c.json({ success: true, data: { sent: true, messageId: logId } });

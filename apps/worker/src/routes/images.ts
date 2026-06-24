@@ -1,7 +1,16 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
+import { ALLOWED_IMAGE_TYPES, resolveUploadedImageMimeType } from '../utils/image-mime.js';
 
 const images = new Hono<Env>();
+
+function imagePublicOrigin(c: { env: Env; req: { url: string } }): string {
+  return (
+    c.env.WORKER_PUBLIC_URL ||
+    c.env.WORKER_URL ||
+    new URL(c.req.url).origin
+  ).replace(/\/$/, '');
+}
 
 // POST /api/images — upload image (base64 or binary)
 images.post('/api/images', async (c) => {
@@ -38,16 +47,25 @@ images.post('/api/images', async (c) => {
       data = binary.buffer;
     } else {
       data = await c.req.arrayBuffer();
-      mimeType = contentType.split(';')[0] || 'image/png';
+      const resolved = resolveUploadedImageMimeType(contentType, data);
+      if (!resolved) {
+        return c.json(
+          {
+            success: false,
+            error: `Unsupported image type. Allowed: ${ALLOWED_IMAGE_TYPES.join(', ')}`,
+          },
+          400,
+        );
+      }
+      mimeType = resolved;
     }
 
     if (data.byteLength > 10 * 1024 * 1024) {
       return c.json({ success: false, error: 'Image too large (max 10MB)' }, 400);
     }
 
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(mimeType)) {
-      return c.json({ success: false, error: `Unsupported image type: ${mimeType}. Allowed: ${allowedTypes.join(', ')}` }, 400);
+    if (!ALLOWED_IMAGE_TYPES.includes(mimeType as (typeof ALLOWED_IMAGE_TYPES)[number])) {
+      return c.json({ success: false, error: `Unsupported image type: ${mimeType}. Allowed: ${ALLOWED_IMAGE_TYPES.join(', ')}` }, 400);
     }
 
     const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : mimeType.split('/')[1];
@@ -59,8 +77,7 @@ images.post('/api/images', async (c) => {
       customMetadata: { originalFilename: filename ?? key },
     });
 
-    const workerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
-    const url = `${workerUrl}/images/${key}`;
+    const url = `${imagePublicOrigin(c)}/images/${key}`;
 
     return c.json({
       success: true,

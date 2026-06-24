@@ -207,6 +207,21 @@ export class LineClient {
     return this.pushMessage(to, [{ type: 'image', originalContentUrl, previewImageUrl }]);
   }
 
+  async pushImageMessages(
+    to: string,
+    images: Array<{ originalContentUrl: string; previewImageUrl: string }>,
+  ): Promise<unknown> {
+    if (images.length === 0) {
+      throw new Error('At least one image is required');
+    }
+    const messages = images.map((img) => ({
+      type: 'image' as const,
+      originalContentUrl: img.originalContentUrl,
+      previewImageUrl: img.previewImageUrl,
+    }));
+    return this.pushMessage(to, messages);
+  }
+
   // ─── Rich Menu Image Upload ─────────────────────────────────────────────
 
   /** Upload image to a rich menu. Accepts PNG/JPEG binary (ArrayBuffer or Uint8Array). */

@@ -11,6 +11,8 @@ import {
 import { LineClient } from '@line-crm/line-sdk';
 import {
   logOutgoingFriendMessage,
+  logOutgoingFriendImages,
+  parseImagePayloads,
   pushMessageToFriend,
   resolveFriendAccessToken,
 } from './push-friend-message.js';
@@ -43,7 +45,12 @@ export async function processScheduledMessages(
         item.message_content,
       );
 
-      await logOutgoingFriendMessage(db, friend.id, item.message_type, item.message_content, 'scheduled');
+      if (item.message_type === 'image') {
+        const images = parseImagePayloads(item.message_content);
+        await logOutgoingFriendImages(db, friend.id, images, 'scheduled');
+      } else {
+        await logOutgoingFriendMessage(db, friend.id, item.message_type, item.message_content, 'scheduled');
+      }
 
       const now = jstNow();
       if (item.chat_id) {

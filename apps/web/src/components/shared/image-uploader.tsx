@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
-import { api } from '@/lib/api'
+import { uploadLineImage } from '@/lib/line-image-upload'
 
 export type ImageUploaderMode = 'url' | 'line-image'
 
@@ -21,7 +21,7 @@ export interface ImageUploaderProps {
  *
  * mode='url' は単一 URL を返す (Event / Staff など)。
  * mode='line-image' は {originalContentUrl, previewImageUrl} を返す (Broadcast / Auto-reply / Template / Chats)。
- * 初版は preview = original の同 URL。後段で本格 resize が必要になれば worker 側で対応。
+ * 1MB 超の写真はプレビュー用に自動圧縮する。
  */
 export default function ImageUploader({ mode, value, onChange, label }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -31,16 +31,8 @@ export default function ImageUploader({ mode, value, onChange, label }: ImageUpl
 
   const upload = useCallback(
     async (file: File) => {
-      if (!file.type.startsWith('image/')) {
+      if (mode === 'url' && !file.type.startsWith('image/')) {
         setError('画像ファイルのみアップロードできます')
-        return
-      }
-      if (mode === 'line-image' && !['image/jpeg', 'image/png'].includes(file.type)) {
-        setError('LINE 送信用は JPEG または PNG のみ対応')
-        return
-      }
-      if (mode === 'line-image' && file.size > 1024 * 1024) {
-        setError('LINE 送信用は 1MB 以下にしてください (preview サイズ制限)')
         return
       }
       if (file.size > 10 * 1024 * 1024) {
@@ -50,19 +42,20 @@ export default function ImageUploader({ mode, value, onChange, label }: ImageUpl
       setBusy(true)
       setError('')
       try {
-        const res = await api.uploads.image(file)
-        if (!res.success) {
-          setError(res.error ?? 'アップロード失敗')
-          return
-        }
-        const url = res.data.url
         if (mode === 'url') {
-          onChange({ mode: 'url', url })
+          const { api } = await import('@/lib/api')
+          const res = await api.uploads.image(file)
+          if (!res.success) {
+            setError(res.error ?? 'アップロード失敗')
+            return
+          }
+          onChange({ mode: 'url', url: res.data.url })
         } else {
-          onChange({ mode: 'line-image', originalContentUrl: url, previewImageUrl: url })
+          const urls = await uploadLineImage(file)
+          onChange({ mode: 'line-image', ...urls })
         }
-      } catch {
-        setError('アップロード失敗')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'アップロード失敗')
       } finally {
         setBusy(false)
       }

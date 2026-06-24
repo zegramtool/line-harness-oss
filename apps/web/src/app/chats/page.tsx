@@ -9,7 +9,11 @@ import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
 import ChatCustomerPanel from '@/components/chats/chat-customer-panel'
-import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
+import {
+  uploadLineImage,
+  type LineImageUrls,
+  MAX_LINE_IMAGES_PER_PUSH,
+} from '@/lib/line-image-upload'
 
 interface Chat {
   id: string
@@ -123,8 +127,71 @@ function scheduledPreviewContent(msg: ScheduledChatMessage): string {
       return `📎 ${p.fileName ?? 'PDF'}`
     } catch { return '📎 PDF' }
   }
-  if (msg.messageType === 'image') return '[画像]'
+  if (msg.messageType === 'image') {
+    try {
+      const p = JSON.parse(msg.messageContent) as unknown
+      if (Array.isArray(p)) return `[画像 ${p.length}枚]`
+    } catch { /* single image */ }
+    return '[画像]'
+  }
   return `[${msg.messageType}]`
+}
+
+function ChatPendingImages({
+  images,
+  uploading,
+  onRemove,
+  onAddClick,
+}: {
+  images: LineImageUrls[]
+  uploading: boolean
+  onRemove: (index: number) => void
+  onAddClick: () => void
+}) {
+  if (images.length === 0 && !uploading) return null
+
+  return (
+    <div className="mb-2 px-1">
+      {uploading && (
+        <div className="mb-2 text-xs text-gray-600">画像をアップロード中...</div>
+      )}
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-1">
+          {images.map((img, index) => (
+            <div key={`${img.originalContentUrl}-${index}`} className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={img.previewImageUrl}
+                alt=""
+                className="h-14 w-14 rounded-lg object-cover border border-gray-200"
+              />
+              <button
+                type="button"
+                onClick={() => onRemove(index)}
+                className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-gray-800 text-white text-xs leading-none"
+                aria-label="画像を削除"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {images.length < MAX_LINE_IMAGES_PER_PUSH && !uploading && (
+            <button
+              type="button"
+              onClick={onAddClick}
+              className="h-14 w-14 rounded-lg border border-dashed border-gray-300 text-gray-500 text-xl"
+              aria-label="画像を追加"
+            >
+              +
+            </button>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-gray-500">
+        {images.length}/{MAX_LINE_IMAGES_PER_PUSH}枚 · 最大{MAX_LINE_IMAGES_PER_PUSH}枚まで1回で送信
+      </p>
+    </div>
+  )
 }
 
 function StickerMessageImage({ content }: { content: string }) {
@@ -414,7 +481,8 @@ export default function ChatsPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
-  const [pendingImage, setPendingImage] = useState<ImageUploaderValue | null>(null)
+  const [pendingImages, setPendingImages] = useState<LineImageUrls[]>([])
+  const [imageUploading, setImageUploading] = useState(false)
   const [pendingPdf, setPendingPdf] = useState<PendingPdf | null>(null)
   const [pdfUploading, setPdfUploading] = useState(false)
   const [sending, setSending] = useState(false)
@@ -638,7 +706,7 @@ export default function ChatsPage() {
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
     setMessageContent('')
-    setPendingImage(null)
+    setPendingImages([])
   }
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
@@ -684,7 +752,7 @@ export default function ChatsPage() {
 
   const handleSendMessage = async () => {
     if (!selectedChatId || sending || sendLockRef.current) return
-    if (!messageContent.trim() && !pendingImage && !pendingPdf) return
+    if (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf) return
     const sendingChatId = selectedChatId
     sendLockRef.current = true
     setSending(true)
@@ -712,17 +780,14 @@ export default function ChatsPage() {
             scheduledAt,
           })
           setPendingPdf(null)
-        } else if (pendingImage?.mode === 'line-image') {
-          const imgPayload = JSON.stringify({
-            originalContentUrl: pendingImage.originalContentUrl,
-            previewImageUrl: pendingImage.previewImageUrl,
-          })
+        } else if (pendingImages.length > 0) {
+          const imgPayload = JSON.stringify(pendingImages)
           await api.chats.send(sendingChatId, {
             messageType: 'image',
             content: imgPayload,
             scheduledAt,
           })
-          setPendingImage(null)
+          setPendingImages([])
         } else if (messageContent.trim()) {
           await api.chats.send(sendingChatId, {
             content: messageContent.trim(),
@@ -786,45 +851,45 @@ export default function ChatsPage() {
         })
       }
       // --- Image send path (runs first when image is present) ---
-      if (pendingImage && pendingImage.mode === 'line-image') {
-        const imgPayload = JSON.stringify({
-          originalContentUrl: pendingImage.originalContentUrl,
-          previewImageUrl: pendingImage.previewImageUrl,
-        })
+      if (pendingImages.length > 0) {
+        const imagesToSend = pendingImages
+        const imgPayload = JSON.stringify(imagesToSend)
         await api.chats.send(sendingChatId, { messageType: 'image', content: imgPayload })
-        setPendingImage(null)
-        // Optimistic update for image
-        setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
-          ...prev,
-          lastMessageAt: now,
-          status: 'in_progress',
-          messages: [
-            ...(prev.messages ?? []),
-            {
-              id: crypto.randomUUID(),
-              direction: 'outgoing',
-              messageType: 'image',
-              content: imgPayload,
-              createdAt: now,
-            },
-          ],
-        } : prev)
+        setPendingImages([])
+        for (const image of imagesToSend) {
+          const singlePayload = JSON.stringify(image)
+          setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
+            ...prev,
+            lastMessageAt: now,
+            status: 'in_progress',
+            messages: [
+              ...(prev.messages ?? []),
+              {
+                id: crypto.randomUUID(),
+                direction: 'outgoing',
+                messageType: 'image',
+                content: singlePayload,
+                createdAt: now,
+              },
+            ],
+          } : prev)
+        }
         setChats((prev) => {
           const exists = prev.some((c) => c.id === sendingChatId)
           if (!exists) return prev
           const currentFilter = statusFilterRef.current
           const currentUnansweredOnly = unansweredOnlyRef.current
+          const imageLabel = imagesToSend.length > 1 ? `[画像 ${imagesToSend.length}枚]` : '[画像]'
           const updated = prev.map((c) => c.id === sendingChatId ? {
             ...c,
             lastMessageAt: now,
             status: 'in_progress' as const,
-            lastMessageContent: '[画像]',
+            lastMessageContent: imageLabel,
             lastMessageDirection: 'outgoing' as const,
             lastMessageType: 'image' as const,
           } : c)
           let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
           if (currentUnansweredOnly) {
-            // 未対応モードでは、自分が返信したばかりの chat はもう未対応ではないのでリストから除外
             filtered = filtered.filter((c) => c.id !== sendingChatId)
           }
           return [...filtered].sort((a, b) => {
@@ -886,8 +951,8 @@ export default function ChatsPage() {
           })
         })
       }
-    } catch {
-      setError('メッセージの送信に失敗しました。')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'メッセージの送信に失敗しました。')
     } finally {
       setSending(false)
       sendLockRef.current = false
@@ -953,7 +1018,7 @@ export default function ChatsPage() {
         setError(res.error ?? 'アップロード失敗')
         return
       }
-      setPendingImage(null)
+      setPendingImages([])
       setPendingPdf({
         url: res.data.url,
         fileName: res.data.fileName || file.name || 'document.pdf',
@@ -969,30 +1034,32 @@ export default function ChatsPage() {
     }
   }
 
-  const handleMobileImageSelect = async (file: File | undefined) => {
-    if (!file) return
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      setError('JPEG または PNG の画像を選んでください')
+  const handleImageFilesSelect = async (fileList: FileList | File[] | null | undefined) => {
+    if (!fileList?.length) return
+    const files = Array.from(fileList)
+    const remaining = MAX_LINE_IMAGES_PER_PUSH - pendingImages.length
+    if (remaining <= 0) {
+      setError(`画像は最大${MAX_LINE_IMAGES_PER_PUSH}枚までです`)
       return
     }
-    if (file.size > 1024 * 1024) {
-      setError('画像は 1MB 以下にしてください')
-      return
+    const toUpload = files.slice(0, remaining)
+    if (files.length > remaining) {
+      setError(`最大${MAX_LINE_IMAGES_PER_PUSH}枚のため、${remaining}枚だけ追加しました`)
+    } else {
+      setError('')
     }
+    setImageUploading(true)
     try {
-      const res = await api.uploads.image(file)
-      if (!res.success) {
-        setError(res.error ?? 'アップロード失敗')
-        return
+      const uploaded: LineImageUrls[] = []
+      for (const file of toUpload) {
+        uploaded.push(await uploadLineImage(file))
       }
-      setPendingImage({
-        mode: 'line-image',
-        originalContentUrl: res.data.url,
-        previewImageUrl: res.data.url,
-      })
+      setPendingImages((prev) => [...prev, ...uploaded].slice(0, MAX_LINE_IMAGES_PER_PUSH))
       setPendingPdf(null)
-    } catch {
-      setError('画像のアップロードに失敗しました')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '画像のアップロードに失敗しました')
+    } finally {
+      setImageUploading(false)
     }
   }
 
@@ -1187,6 +1254,18 @@ export default function ChatsPage() {
                 onChange={(e) => {
                   const f = e.target.files?.[0]
                   void handleMobilePdfSelect(f)
+                  e.target.value = ''
+                }}
+              />
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = e.target.files
+                  void handleImageFilesSelect(files)
                   e.target.value = ''
                 }}
               />
@@ -1480,22 +1559,14 @@ export default function ChatsPage() {
                     </button>
                   </div>
                 )}
-                {pendingImage?.mode === 'line-image' && (
-                  <div className="mb-2 flex items-center gap-2 px-1">
-                    <img
-                      src={pendingImage.previewImageUrl}
-                      alt=""
-                      className="h-14 w-14 rounded-lg object-cover border border-gray-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setPendingImage(null)}
-                      className="text-xs text-gray-600 px-2 py-1 bg-white rounded-md border border-gray-200"
-                    >
-                      取消
-                    </button>
-                  </div>
-                )}
+                {pendingImages.length > 0 || imageUploading ? (
+                  <ChatPendingImages
+                    images={pendingImages}
+                    uploading={imageUploading}
+                    onRemove={(index) => setPendingImages((prev) => prev.filter((_, i) => i !== index))}
+                    onAddClick={() => imageInputRef.current?.click()}
+                  />
+                ) : null}
                 <div className="flex items-end gap-1.5">
                   <button
                     type="button"
@@ -1518,17 +1589,6 @@ export default function ChatsPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                     </svg>
                   </button>
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      void handleMobileImageSelect(f)
-                      e.target.value = ''
-                    }}
-                  />
                   <textarea
                     ref={mobileTextareaRef}
                     rows={1}
@@ -1554,7 +1614,7 @@ export default function ChatsPage() {
                   <button
                     type="button"
                     onClick={() => void handleSendMessage()}
-                    disabled={sending || (!messageContent.trim() && !pendingImage && !pendingPdf)}
+                    disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
                     className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
                     style={{ backgroundColor: '#06C755' }}
                     aria-label="送信"
@@ -1609,14 +1669,20 @@ export default function ChatsPage() {
                   </label>
                 </div>
                 <div className="mb-2">
-                  <ImageUploader
-                    mode="line-image"
-                    value={pendingImage}
-                    onChange={(next) => {
-                      setPendingImage(next)
-                      if (next) setPendingPdf(null)
-                    }}
-                    label="画像を送る (任意)"
+                  <div className="text-sm font-medium text-gray-700 mb-1">画像を送る (任意)</div>
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={imageUploading || pendingImages.length >= MAX_LINE_IMAGES_PER_PUSH}
+                    className="text-sm px-3 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50"
+                  >
+                    {imageUploading ? 'アップロード中...' : '📎 画像を選択'}
+                  </button>
+                  <ChatPendingImages
+                    images={pendingImages}
+                    uploading={imageUploading}
+                    onRemove={(index) => setPendingImages((prev) => prev.filter((_, i) => i !== index))}
+                    onAddClick={() => imageInputRef.current?.click()}
                   />
                 </div>
                 <div className="mb-2">
@@ -1680,7 +1746,7 @@ export default function ChatsPage() {
                   />
                   <button
                     onClick={handleSendMessage}
-                    disabled={sending || (!messageContent.trim() && !pendingImage && !pendingPdf)}
+                    disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
                     className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
