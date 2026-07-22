@@ -155,7 +155,7 @@ export function formatTargetAreasStringForDisplay(areasStr: string, detail: stri
 function normalizeContactMethods(methods: string | readonly string[]): readonly string[] {
   if (Array.isArray(methods)) return methods;
   if (!methods) return [];
-  return methods
+  return String(methods)
     .split('、')
     .map((m) => m.trim())
     .filter(Boolean);
