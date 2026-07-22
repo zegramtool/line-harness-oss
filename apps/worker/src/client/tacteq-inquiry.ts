@@ -52,6 +52,7 @@ interface WizardState {
   specificDeadlineDate: string;
   workScheduleNotes: string;
   requestPreference: string;
+  budgetSense: string;
   firstTimeRepair: string;
   noticedSince: string;
   contactMethods: string[];
@@ -83,6 +84,7 @@ const state: WizardState = {
   specificDeadlineDate: '',
   workScheduleNotes: '',
   requestPreference: '',
+  budgetSense: '',
   firstTimeRepair: '',
   noticedSince: '',
   contactMethods: [],
@@ -364,7 +366,7 @@ function render(): void {
          <input class="tq-input" id="address" type="text" value="${escapeHtml(state.address)}" placeholder="郵便番号から自動入力" />
        </div>
        <div class="tq-field">
-         <label class="tq-label" for="city">お住まいの市区町村 <span class="tq-required">*</span></label>
+         <label class="tq-label" for="city">物件の所在地 <span class="tq-required">*</span></label>
          <input class="tq-input" id="city" type="text" value="${escapeHtml(state.city)}" placeholder="例：岡崎市" />
        </div>`,
       `<button type="button" class="tq-btn tq-btn-secondary" id="back-btn">戻る</button>
@@ -380,7 +382,7 @@ function render(): void {
       state.address = (document.getElementById('address') as HTMLInputElement).value.trim();
       state.city = (document.getElementById('city') as HTMLInputElement).value.trim();
       if (!state.customerName || !state.furigana || !state.city) {
-        showError('お名前・フリガナ・市区町村は必須です');
+        showError('お名前・フリガナ・物件の所在地は必須です');
         return false;
       }
       clearError();
@@ -416,6 +418,11 @@ function render(): void {
          <div class="tq-options">${renderRadioOptions('request_preference', REQUEST_PREFERENCES, state.requestPreference)}</div>
        </div>
        <div class="tq-field">
+         <label class="tq-label" for="budget-sense">ご予算感は決まっていますか？</label>
+         <p class="tq-hint">決まっていれば入力してください（任意）</p>
+         <input class="tq-input" id="budget-sense" type="text" value="${escapeHtml(state.budgetSense)}" placeholder="例：5〜10万円、まだ決まっていない" />
+       </div>
+       <div class="tq-field">
          <p class="tq-label">お見積り・リペアは初めてですか？ <span class="tq-required">*</span></p>
          <div class="tq-options">${renderRadioOptions('first_time', FIRST_TIME_OPTIONS, state.firstTimeRepair)}</div>
        </div>
@@ -440,6 +447,7 @@ function render(): void {
       state.specificDeadlineDate = (document.getElementById('specific-deadline') as HTMLInputElement).value.trim();
       state.workScheduleNotes = (document.getElementById('work-schedule') as HTMLTextAreaElement).value.trim();
       state.requestPreference = requestPref.value;
+      state.budgetSense = (document.getElementById('budget-sense') as HTMLInputElement).value.trim();
       state.firstTimeRepair = firstTime.value;
       state.noticedSince = (document.getElementById('noticed-since') as HTMLInputElement).value.trim();
       clearError();
@@ -578,6 +586,7 @@ function buildSubmissionData(): Record<string, string> {
   if (state.address) data.address = state.address;
   if (state.specificDeadlineDate) data.specific_deadline_date = state.specificDeadlineDate;
   if (state.workScheduleNotes) data.work_schedule_notes = state.workScheduleNotes;
+  if (state.budgetSense) data.budget_sense = state.budgetSense;
   if (state.noticedSince) data.noticed_since = state.noticedSince;
   if (state.phone) data.phone = state.phone;
   if (state.email) data.email = state.email;
