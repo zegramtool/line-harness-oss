@@ -178,3 +178,41 @@ export async function cancelScheduledMessage(db: D1Database, id: string): Promis
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
+
+export interface UpdateScheduledMessageInput {
+  messageType?: ScheduledMessageType;
+  messageContent?: string;
+  altText?: string | null;
+  scheduledAt?: string;
+}
+
+/** pending の予約のみ更新。競合で claim 済みなら null */
+export async function updateScheduledMessage(
+  db: D1Database,
+  id: string,
+  input: UpdateScheduledMessageInput,
+): Promise<ScheduledMessageRow | null> {
+  const existing = await getScheduledMessageById(db, id);
+  if (!existing || existing.status !== 'pending') return null;
+
+  const now = jstNow();
+  const messageType = input.messageType ?? existing.message_type;
+  const messageContent = input.messageContent ?? existing.message_content;
+  const altText = input.altText !== undefined ? input.altText : existing.alt_text;
+  const scheduledAt =
+    input.scheduledAt !== undefined
+      ? normalizeScheduledAtInput(input.scheduledAt)
+      : existing.scheduled_at;
+
+  const result = await db
+    .prepare(
+      `UPDATE scheduled_messages
+       SET message_type = ?, message_content = ?, alt_text = ?, scheduled_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'pending'`,
+    )
+    .bind(messageType, messageContent, altText, scheduledAt, now, id)
+    .run();
+
+  if ((result.meta.changes ?? 0) === 0) return null;
+  return getScheduledMessageById(db, id);
+}

@@ -113,6 +113,24 @@ function defaultScheduledLocalValue(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+/** ISO（JST含む）を datetime-local 用の値へ（Asia/Tokyo） */
+function toScheduledLocalValue(iso: string): string {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return defaultScheduledLocalValue()
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
+}
+
 function formatScheduledAtLabel(iso: string): string {
   const d = new Date(iso)
   if (!Number.isFinite(d.getTime())) return iso
@@ -135,6 +153,50 @@ function scheduledPreviewContent(msg: ScheduledChatMessage): string {
     return '[画像]'
   }
   return `[${msg.messageType}]`
+}
+
+function parseScheduledImages(content: string): LineImageUrls[] {
+  try {
+    const parsed = JSON.parse(content) as unknown
+    const list = Array.isArray(parsed) ? parsed : [parsed]
+    return list
+      .filter((item): item is LineImageUrls => {
+        if (!item || typeof item !== 'object') return false
+        const row = item as Partial<LineImageUrls>
+        return Boolean(row.originalContentUrl && row.previewImageUrl)
+      })
+      .slice(0, MAX_LINE_IMAGES_PER_PUSH)
+  } catch {
+    return []
+  }
+}
+
+function parseScheduledPdf(content: string): PendingPdf | null {
+  try {
+    const p = JSON.parse(content) as {
+      url?: string
+      fileName?: string
+      size?: number
+      fileSize?: number
+      expiresAt?: string
+      expiresAtLabel?: string
+    }
+    if (!p.url) return null
+    const size = typeof p.size === 'number'
+      ? p.size
+      : typeof p.fileSize === 'number'
+        ? p.fileSize
+        : 0
+    return {
+      url: p.url,
+      fileName: p.fileName ?? 'document.pdf',
+      size,
+      expiresAt: p.expiresAt ?? '',
+      expiresAtLabel: p.expiresAtLabel ?? '',
+    }
+  } catch {
+    return null
+  }
 }
 
 function ChatPendingImages({
@@ -504,6 +566,7 @@ export default function ChatsPage() {
   const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduledLocalValue)
   const [pendingScheduled, setPendingScheduled] = useState<ScheduledChatMessage[]>([])
   const [cancellingScheduledId, setCancellingScheduledId] = useState<string | null>(null)
+  const [editingScheduledId, setEditingScheduledId] = useState<string | null>(null)
 
   const loadPendingScheduled = useCallback(async (chatId: string) => {
     try {
@@ -703,10 +766,53 @@ export default function ChatsPage() {
     }
   }, [messageContent])
 
-  const handleSelectChat = (chatId: string) => {
-    setSelectedChatId(chatId)
+  const clearComposerDraft = useCallback(() => {
     setMessageContent('')
     setPendingImages([])
+    setPendingPdf(null)
+  }, [])
+
+  const clearScheduledEdit = useCallback(() => {
+    setEditingScheduledId(null)
+    clearComposerDraft()
+    setSendTiming('now')
+  }, [clearComposerDraft])
+
+  const handleSelectChat = (chatId: string) => {
+    setSelectedChatId(chatId)
+    clearScheduledEdit()
+  }
+
+  const handleStartEditScheduled = (item: ScheduledChatMessage) => {
+    setError('')
+    setEditingScheduledId(item.id)
+    setSendTiming('scheduled')
+    setScheduledAtLocal(toScheduledLocalValue(item.scheduledAt))
+    setMessageContent('')
+    setPendingImages([])
+    setPendingPdf(null)
+
+    if (item.messageType === 'text') {
+      setMessageContent(item.messageContent)
+      return
+    }
+    if (item.messageType === 'image') {
+      const images = parseScheduledImages(item.messageContent)
+      if (images.length === 0) {
+        setError('予約画像の読み込みに失敗しました。日時のみ変更するか、画像を選び直してください。')
+        return
+      }
+      setPendingImages(images)
+      return
+    }
+    if (item.messageType === 'file') {
+      const pdf = parseScheduledPdf(item.messageContent)
+      if (!pdf) {
+        setError('予約PDFの読み込みに失敗しました。日時のみ変更するか、PDFを選び直してください。')
+        return
+      }
+      setPendingPdf(pdf)
+    }
   }
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
@@ -740,6 +846,9 @@ export default function ChatsPage() {
         setError('予約の取消に失敗しました。')
         return
       }
+      if (editingScheduledId === id) {
+        clearScheduledEdit()
+      }
       if (selectedChatId) {
         await loadPendingScheduled(selectedChatId)
       }
@@ -766,36 +875,51 @@ export default function ChatsPage() {
         }
         const scheduledAt = scheduledAtLocal.trim()
 
+        let messageType: 'text' | 'image' | 'file' = 'text'
+        let content = ''
         if (pendingPdf) {
-          const pdfPayload = JSON.stringify({
+          messageType = 'file'
+          content = JSON.stringify({
             url: pendingPdf.url,
             fileName: pendingPdf.fileName,
             fileSize: pendingPdf.size,
             expiresAt: pendingPdf.expiresAt,
             expiresAtLabel: pendingPdf.expiresAtLabel,
           })
-          await api.chats.send(sendingChatId, {
-            messageType: 'file',
-            content: pdfPayload,
-            scheduledAt,
-          })
-          setPendingPdf(null)
         } else if (pendingImages.length > 0) {
-          const imgPayload = JSON.stringify(pendingImages)
-          await api.chats.send(sendingChatId, {
-            messageType: 'image',
-            content: imgPayload,
-            scheduledAt,
-          })
-          setPendingImages([])
+          messageType = 'image'
+          content = JSON.stringify(pendingImages)
         } else if (messageContent.trim()) {
-          await api.chats.send(sendingChatId, {
-            content: messageContent.trim(),
-            scheduledAt,
-          })
-          setMessageContent('')
+          messageType = 'text'
+          content = messageContent.trim()
+        } else {
+          setError('送信内容を入力してください。')
+          return
         }
 
+        if (editingScheduledId) {
+          const res = await api.scheduledMessages.update(editingScheduledId, {
+            messageType,
+            content,
+            scheduledAt,
+          })
+          if (!res.success) {
+            setError(res.error ?? '予約の更新に失敗しました。')
+            return
+          }
+          clearComposerDraft()
+          setEditingScheduledId(null)
+          setSendTiming('now')
+          await loadPendingScheduled(sendingChatId)
+          return
+        }
+
+        await api.chats.send(sendingChatId, {
+          messageType,
+          content,
+          scheduledAt,
+        })
+        clearComposerDraft()
         await loadPendingScheduled(sendingChatId)
         return
       }
@@ -1477,33 +1601,65 @@ export default function ChatsPage() {
                       {pendingScheduled.map((item) => (
                         <li
                           key={item.id}
-                          className="flex items-start gap-2 rounded-md border border-amber-100 bg-white/80 px-2 py-1.5 text-xs text-amber-950"
+                          className={`flex items-start gap-2 rounded-md border px-2 py-1.5 text-xs text-amber-950 ${
+                            editingScheduledId === item.id
+                              ? 'border-green-400 bg-green-50/80'
+                              : 'border-amber-100 bg-white/80'
+                          }`}
                         >
                           <div className="min-w-0 flex-1">
                             <div className="font-medium tabular-nums text-amber-900">
                               {formatScheduledAtLabel(item.scheduledAt)}
+                              {editingScheduledId === item.id && (
+                                <span className="ml-1.5 text-[10px] font-normal text-green-700">編集中</span>
+                              )}
                             </div>
                             <div className="truncate text-amber-950/90">{scheduledPreviewContent(item)}</div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => void handleCancelScheduled(item.id)}
-                            disabled={cancellingScheduledId === item.id}
-                            className="shrink-0 rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-                          >
-                            {cancellingScheduledId === item.id ? '取消中...' : '予約取消'}
-                          </button>
+                          <div className="flex shrink-0 flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditScheduled(item)}
+                              disabled={cancellingScheduledId === item.id || sending}
+                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {editingScheduledId === item.id ? '再読込' : '編集'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleCancelScheduled(item.id)}
+                              disabled={cancellingScheduledId === item.id}
+                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {cancellingScheduledId === item.id ? '取消中...' : '予約取消'}
+                            </button>
+                          </div>
                         </li>
                       ))}
                     </ul>
                     <p className="text-[10px] text-amber-700 mt-1.5">※ 指定時刻から最大5分程度で送信されます</p>
                   </div>
                 )}
+                {editingScheduledId && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-green-200 bg-green-50 px-2 py-1.5 text-xs text-green-900">
+                    <span className="min-w-0 flex-1">予約を編集中です。内容と日時を直して「更新」を押してください。</span>
+                    <button
+                      type="button"
+                      onClick={clearScheduledEdit}
+                      className="shrink-0 rounded-md border border-green-300 bg-white px-2 py-1 text-[11px] font-medium text-green-900 hover:bg-green-100"
+                    >
+                      編集やめる
+                    </button>
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
                   <span className="text-gray-500">送信:</span>
                   <button
                     type="button"
-                    onClick={() => setSendTiming('now')}
+                    onClick={() => {
+                      if (editingScheduledId) clearScheduledEdit()
+                      else setSendTiming('now')
+                    }}
                     className={`px-2 py-1 rounded-md border ${
                       sendTiming === 'now'
                         ? 'border-green-500 bg-green-50 text-green-800'
@@ -1617,7 +1773,7 @@ export default function ChatsPage() {
                     disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
                     className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
                     style={{ backgroundColor: '#06C755' }}
-                    aria-label="送信"
+                    aria-label={editingScheduledId ? '更新' : sendTiming === 'scheduled' ? '予約' : '送信'}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
@@ -1750,7 +1906,13 @@ export default function ChatsPage() {
                     className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
-                    {sending ? '送信中...' : sendTiming === 'scheduled' ? '予約' : '送信'}
+                    {sending
+                      ? (editingScheduledId ? '更新中...' : '送信中...')
+                      : editingScheduledId
+                        ? '更新'
+                        : sendTiming === 'scheduled'
+                          ? '予約'
+                          : '送信'}
                   </button>
                 </div>
               </div>

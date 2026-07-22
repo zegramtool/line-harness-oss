@@ -716,6 +716,17 @@ export const api = {
       ),
   },
   scheduledMessages: {
+    update: (
+      id: string,
+      data: { content?: string; messageType?: string; scheduledAt?: string },
+    ) =>
+      fetchApi<ApiResponse<ScheduledChatMessage>>(
+        `/api/scheduled-messages/${id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(data),
+        },
+      ),
     cancel: (id: string) =>
       fetchApi<ApiResponse<{ id: string; status: string }>>(
         `/api/scheduled-messages/${id}`,
