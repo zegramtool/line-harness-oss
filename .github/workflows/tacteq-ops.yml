@@ -14,6 +14,15 @@ on:
           - both
           - upload-repair-flow-pdf
           - update-inquiry-form-fields
+  # Cloud Agent の GITHUB_TOKEN は workflow_dispatch が 403 のため、
+  # 関連ファイルの push でも実行できるようにする
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/tacteq/assets/repair-flow.pdf'
+      - 'scripts/tacteq/upload-repair-flow-pdf.ts'
+      - 'scripts/tacteq/update-inquiry-form-fields-d1.ts'
+      - '.github/workflows/tacteq-ops.yml'
 
 jobs:
   run:
@@ -30,8 +39,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=both" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload repair-flow PDF to R2
-        if: inputs.mode == 'both' || inputs.mode == 'upload-repair-flow-pdf'
+        if: steps.mode.outputs.value == 'both' || steps.mode.outputs.value == 'upload-repair-flow-pdf'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -41,7 +59,7 @@ jobs:
           pnpm tacteq:upload-repair-flow-pdf
 
       - name: Update inquiry form fields in D1
-        if: inputs.mode == 'both' || inputs.mode == 'update-inquiry-form-fields'
+        if: steps.mode.outputs.value == 'both' || steps.mode.outputs.value == 'update-inquiry-form-fields'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
