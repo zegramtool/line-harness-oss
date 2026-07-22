@@ -14,6 +14,7 @@ import {
   type LineImageUrls,
   MAX_LINE_IMAGES_PER_PUSH,
 } from '@/lib/line-image-upload'
+import { buildScheduledPayloads } from '@/lib/build-scheduled-payloads'
 
 interface Chat {
   id: string
@@ -874,34 +875,12 @@ export default function ChatsPage() {
           return
         }
         const scheduledAt = scheduledAtLocal.trim()
-        const textContent = messageContent.trim()
-        const payloads: Array<{ messageType: 'text' | 'image' | 'file'; content: string }> = []
-
         // 即時送信と同様、PDF / 画像 / テキストは独立に予約する（排他 if-else にしない）
-        if (pendingPdf) {
-          payloads.push({
-            messageType: 'file',
-            content: JSON.stringify({
-              url: pendingPdf.url,
-              fileName: pendingPdf.fileName,
-              fileSize: pendingPdf.size,
-              expiresAt: pendingPdf.expiresAt,
-              expiresAtLabel: pendingPdf.expiresAtLabel,
-            }),
-          })
-        }
-        if (pendingImages.length > 0) {
-          payloads.push({
-            messageType: 'image',
-            content: JSON.stringify(pendingImages),
-          })
-        }
-        if (textContent) {
-          payloads.push({
-            messageType: 'text',
-            content: textContent,
-          })
-        }
+        const payloads = buildScheduledPayloads({
+          pendingPdf,
+          pendingImages,
+          messageContent,
+        })
         if (payloads.length === 0) {
           setError('送信内容を入力してください。')
           return
