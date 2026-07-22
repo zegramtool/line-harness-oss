@@ -78,6 +78,9 @@ export const PHOTO_REQUEST_TEXT = `お問い合わせありがとうございま
 動画を送っていただけると状況がより分かりやすく、大変ありがたいです。
 👇参考画像の通りに撮影をお願いいたします。`;
 
+/** 傷・劣化相談時、作業フロー PDF の直前に送る案内文 */
+export const REPAIR_FLOW_INTRO_TEXT = '作業の流れはこちらです。';
+
 function formatValue(value: unknown): string {
   if (value === undefined || value === null || value === '') return '—';
   if (Array.isArray(value)) return value.length === 0 ? '—' : value.join('、');
@@ -176,16 +179,19 @@ export function buildTacteqFormReplyMessages(opts: {
     buildMessage('flex', JSON.stringify(flex), 'お問い合わせ内容'),
   ];
 
-  // 傷・劣化の相談時は作業フロー PDF（「PDFを開く」Flex）を追加
-  if (shouldSendRepairFlowPdf(opts.submissionData.consultation_type)) {
-    const pdfUrl = `${baseUrl}/images/${TACTEQ_REPAIR_FLOW_PDF_R2_KEY}`;
-    const pdfFlex = buildPdfLinkFlex(TACTEQ_REPAIR_FLOW_PDF_FILE_NAME, pdfUrl);
-    messages.push(buildMessage('flex', JSON.stringify(pdfFlex), `${TACTEQ_REPAIR_FLOW_PDF_FILE_NAME}（PDF）`));
-  }
-
+  // 写真撮影のお願い → 撮影見本画像
   messages.push(buildMessage('text', PHOTO_REQUEST_TEXT));
   messages.push(
     buildMessage('image', JSON.stringify({ originalContentUrl: imageUrl, previewImageUrl: imageUrl })),
   );
+
+  // 傷・劣化の相談時は、写真依頼の直後に案内テキスト＋作業フロー PDF を追加
+  if (shouldSendRepairFlowPdf(opts.submissionData.consultation_type)) {
+    const pdfUrl = `${baseUrl}/images/${TACTEQ_REPAIR_FLOW_PDF_R2_KEY}`;
+    const pdfFlex = buildPdfLinkFlex(TACTEQ_REPAIR_FLOW_PDF_FILE_NAME, pdfUrl);
+    messages.push(buildMessage('text', REPAIR_FLOW_INTRO_TEXT));
+    messages.push(buildMessage('flex', JSON.stringify(pdfFlex), `${TACTEQ_REPAIR_FLOW_PDF_FILE_NAME}（PDF）`));
+  }
+
   return messages;
 }

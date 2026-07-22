@@ -612,7 +612,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
             // Tracked-link reward template overrides everything (per-campaign reward)
             messages.push(rewardFromTrackedLink as ReturnType<typeof buildMessage>);
           } else if (form.name === TACTEQ_FORM_NAME) {
-            // TacTeQ: 問い合わせサマリー → 写真依頼 → 撮影見本画像
+            // TacTeQ: サマリー → 写真依頼 → 撮影見本 →（傷/劣化時）作業流れ案内＋PDF
             const { buildTacteqFormReplyMessages } = await import('../services/tacteq-form-reply.js');
             messages.push(
               ...buildTacteqFormReplyMessages({
