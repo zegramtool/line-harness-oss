@@ -22,6 +22,7 @@
     "tacteq:activate-welcome": "tsx scripts/tacteq/activate-welcome.ts",
     "tacteq:upload-welcome-image": "tsx scripts/tacteq/upload-welcome-image.ts",
     "tacteq:upload-repair-flow-pdf": "tsx scripts/tacteq/upload-repair-flow-pdf.ts",
+    "tacteq:update-inquiry-form-fields-d1": "tsx scripts/tacteq/update-inquiry-form-fields-d1.ts",
     "tacteq:sync-followers": "tsx scripts/tacteq/sync-followers.ts --token-from-d1",
     "tacteq:import-chat": "tsx scripts/tacteq/import-chat-history.ts",
     "tacteq:setup-pipeline-tags": "tsx scripts/tacteq/setup-pipeline-tags.ts",
