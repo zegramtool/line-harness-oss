@@ -1,8 +1,21 @@
 import type { Message } from '@line-crm/line-sdk';
 import { formatTargetAreasStringForDisplay } from '../client/tacteq-inquiry-fields.js';
+import { buildPdfLinkFlex } from './pdf-flex-message.js';
 import { buildMessage } from './step-delivery.js';
 
 export const TACTEQ_ESTIMATE_PHOTO_GUIDE_R2_KEY = 'welcome-estimate-photo-guide.png';
+
+/** 期限なし固定キー（チャットPDFの files/ 配下ではない） */
+export const TACTEQ_REPAIR_FLOW_PDF_R2_KEY = 'tacteq-repair-flow.pdf';
+export const TACTEQ_REPAIR_FLOW_PDF_FILE_NAME = '傷リペアの作業の流れ.pdf';
+
+/** この相談種別のとき、作業フロー PDF を自動送信する */
+export const TACTEQ_REPAIR_FLOW_PDF_CONSULTATION_TYPES = ['傷の修繕', '劣化の修繕'] as const;
+
+export function shouldSendRepairFlowPdf(consultationType: unknown): boolean {
+  const value = String(consultationType ?? '').trim();
+  return (TACTEQ_REPAIR_FLOW_PDF_CONSULTATION_TYPES as readonly string[]).includes(value);
+}
 
 export const TACTEQ_FIELD_LABELS: Record<string, string> = {
   consultation_type: '今回のご相談',
@@ -161,8 +174,16 @@ export function buildTacteqFormReplyMessages(opts: {
 
   const messages: Message[] = [
     buildMessage('flex', JSON.stringify(flex), 'お問い合わせ内容'),
-    buildMessage('text', PHOTO_REQUEST_TEXT),
   ];
+
+  // 傷・劣化の相談時は作業フロー PDF（「PDFを開く」Flex）を追加
+  if (shouldSendRepairFlowPdf(opts.submissionData.consultation_type)) {
+    const pdfUrl = `${baseUrl}/images/${TACTEQ_REPAIR_FLOW_PDF_R2_KEY}`;
+    const pdfFlex = buildPdfLinkFlex(TACTEQ_REPAIR_FLOW_PDF_FILE_NAME, pdfUrl);
+    messages.push(buildMessage('flex', JSON.stringify(pdfFlex), `${TACTEQ_REPAIR_FLOW_PDF_FILE_NAME}（PDF）`));
+  }
+
+  messages.push(buildMessage('text', PHOTO_REQUEST_TEXT));
   messages.push(
     buildMessage('image', JSON.stringify({ originalContentUrl: imageUrl, previewImageUrl: imageUrl })),
   );
