@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
+import { resolveFormFieldLabel } from '@/lib/form-field-labels'
 import FriendTagEditor from '@/components/friends/friend-tag-editor'
 
 interface FriendDetail {
@@ -238,7 +239,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
                 <dl className="space-y-2 text-xs">
                   {Object.entries(friend.metadata).map(([key, value]) => (
                     <div key={key}>
-                      <dt className="text-[10px] text-gray-400 uppercase tracking-wide">{key}</dt>
+                      <dt className="text-[10px] text-gray-400 tracking-wide">{resolveFormFieldLabel(key)}</dt>
                       <dd className="text-gray-700 mt-0.5 whitespace-pre-wrap break-words">{renderValue(value)}</dd>
                     </div>
                   ))}

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { fetchApi } from '@/lib/api'
 import { countryFlag } from '@/lib/country-flag'
+import { resolveFormFieldLabel } from '@/lib/form-field-labels'
 import Header from '@/components/layout/header'
 
 interface UsedByAccount {
@@ -253,7 +254,7 @@ export default function FormSubmissionsPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">日時</th>
                       {fieldKeys.slice(0, 4).map((key) => (
                         <th key={key} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase whitespace-nowrap">
-                          {fieldLabels[key] || key}
+                          {resolveFormFieldLabel(key, fieldLabels)}
                         </th>
                       ))}
                       {fieldKeys.length > 4 && (
@@ -378,7 +379,7 @@ export default function FormSubmissionsPage() {
                   ) : (
                     fieldKeys.map((key) => (
                       <div key={key} className="grid grid-cols-1 gap-1">
-                        <dt className="text-[11px] text-gray-500">{fieldLabels[key] || key}</dt>
+                        <dt className="text-[11px] text-gray-500">{resolveFormFieldLabel(key, fieldLabels)}</dt>
                         <dd className="text-sm text-gray-900 break-words whitespace-pre-wrap">
                           {formatValue(detailSubmission.data[key])}
                         </dd>
