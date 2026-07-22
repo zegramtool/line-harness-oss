@@ -1,0 +1,51 @@
+# TacTeQ 運用（PDF アップロード / フォーム fields 更新）
+# GitHub Secrets の CLOUDFLARE_* を使い、Cloud Agent 無しでも実行できる。
+name: TacTeQ Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '実行内容'
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - upload-repair-flow-pdf
+          - update-inquiry-form-fields
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Upload repair-flow PDF to R2
+        if: inputs.mode == 'both' || inputs.mode == 'upload-repair-flow-pdf'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          pnpm tacteq:upload-repair-flow-pdf
+
+      - name: Update inquiry form fields in D1
+        if: inputs.mode == 'both' || inputs.mode == 'update-inquiry-form-fields'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          pnpm exec tsx scripts/tacteq/update-inquiry-form-fields-d1.ts
