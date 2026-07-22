@@ -59,7 +59,7 @@ export default function LoginPage() {
       if (mode === 'bearer') {
         console.info('[auth] mobile bearer session established')
       }
-      router.push('/')
+      router.push('/chats')
     } catch (err) {
       clearClientSession()
       setError(err instanceof Error ? err.message : '接続に失敗しました')
