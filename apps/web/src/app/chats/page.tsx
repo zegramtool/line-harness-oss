@@ -874,38 +874,57 @@ export default function ChatsPage() {
           return
         }
         const scheduledAt = scheduledAtLocal.trim()
+        const textContent = messageContent.trim()
+        const payloads: Array<{ messageType: 'text' | 'image' | 'file'; content: string }> = []
 
-        let messageType: 'text' | 'image' | 'file' = 'text'
-        let content = ''
+        // 即時送信と同様、PDF / 画像 / テキストは独立に予約する（排他 if-else にしない）
         if (pendingPdf) {
-          messageType = 'file'
-          content = JSON.stringify({
-            url: pendingPdf.url,
-            fileName: pendingPdf.fileName,
-            fileSize: pendingPdf.size,
-            expiresAt: pendingPdf.expiresAt,
-            expiresAtLabel: pendingPdf.expiresAtLabel,
+          payloads.push({
+            messageType: 'file',
+            content: JSON.stringify({
+              url: pendingPdf.url,
+              fileName: pendingPdf.fileName,
+              fileSize: pendingPdf.size,
+              expiresAt: pendingPdf.expiresAt,
+              expiresAtLabel: pendingPdf.expiresAtLabel,
+            }),
           })
-        } else if (pendingImages.length > 0) {
-          messageType = 'image'
-          content = JSON.stringify(pendingImages)
-        } else if (messageContent.trim()) {
-          messageType = 'text'
-          content = messageContent.trim()
-        } else {
+        }
+        if (pendingImages.length > 0) {
+          payloads.push({
+            messageType: 'image',
+            content: JSON.stringify(pendingImages),
+          })
+        }
+        if (textContent) {
+          payloads.push({
+            messageType: 'text',
+            content: textContent,
+          })
+        }
+        if (payloads.length === 0) {
           setError('送信内容を入力してください。')
           return
         }
 
         if (editingScheduledId) {
+          // 編集対象は1件更新。追加種別（例: PDF編集中にテキスト追加）は新規予約として作成
+          const [primary, ...extras] = payloads
           const res = await api.scheduledMessages.update(editingScheduledId, {
-            messageType,
-            content,
+            messageType: primary.messageType,
+            content: primary.content,
             scheduledAt,
           })
           if (!res.success) {
             setError(res.error ?? '予約の更新に失敗しました。')
             return
+          }
+          for (const extra of extras) {
+            await api.chats.send(sendingChatId, {
+              messageType: extra.messageType,
+              content: extra.content,
+              scheduledAt,
+            })
           }
           clearComposerDraft()
           setEditingScheduledId(null)
@@ -914,11 +933,13 @@ export default function ChatsPage() {
           return
         }
 
-        await api.chats.send(sendingChatId, {
-          messageType,
-          content,
-          scheduledAt,
-        })
+        for (const payload of payloads) {
+          await api.chats.send(sendingChatId, {
+            messageType: payload.messageType,
+            content: payload.content,
+            scheduledAt,
+          })
+        }
         clearComposerDraft()
         await loadPendingScheduled(sendingChatId)
         return
