@@ -4,7 +4,7 @@ import { ALLOWED_IMAGE_TYPES, resolveUploadedImageMimeType } from '../utils/imag
 
 const images = new Hono<Env>();
 
-function imagePublicOrigin(c: { env: Env; req: { url: string } }): string {
+function imagePublicOrigin(c: { env: Env['Bindings']; req: { url: string } }): string {
   return (
     c.env.WORKER_PUBLIC_URL ||
     c.env.WORKER_URL ||

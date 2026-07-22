@@ -81,12 +81,13 @@ export const TACTEQ_FIELD_LABELS: Record<string, string> = {
   furigana: 'フリガナ',
   postal_code: '郵便番号',
   address: '住所',
-  city: 'お住まいの市区町村',
+  city: '物件の所在地',
   primary_purpose: '一番の目的',
   deadline_preference: 'ご希望の完了期日',
   specific_deadline_date: '具体的な希望日',
   work_schedule_notes: '作業希望日・不可日',
   request_preference: 'ご要望',
+  budget_sense: 'ご予算感',
   first_time_repair: 'お見積り・リペアは初めて',
   noticed_since: '気になり始めた時期',
   contact_method: 'ご希望の連絡手段',
@@ -114,6 +115,7 @@ export const TACTEQ_FIELD_ORDER = [
   'specific_deadline_date',
   'work_schedule_notes',
   'request_preference',
+  'budget_sense',
   'first_time_repair',
   'noticed_since',
   'contact_method',
@@ -153,7 +155,7 @@ export function formatTargetAreasStringForDisplay(areasStr: string, detail: stri
 function normalizeContactMethods(methods: string | readonly string[]): readonly string[] {
   if (Array.isArray(methods)) return methods;
   if (!methods) return [];
-  return methods
+  return String(methods)
     .split('、')
     .map((m) => m.trim())
     .filter(Boolean);

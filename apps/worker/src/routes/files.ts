@@ -21,7 +21,7 @@ const PDF_MIME = 'application/pdf';
 
 const files = new Hono<Env>();
 
-function workerPublicOrigin(c: { env: Env; req: { url: string } }): string {
+function workerPublicOrigin(c: { env: Env['Bindings']; req: { url: string } }): string {
   return (
     c.env.WORKER_PUBLIC_URL ||
     c.env.WORKER_URL ||
