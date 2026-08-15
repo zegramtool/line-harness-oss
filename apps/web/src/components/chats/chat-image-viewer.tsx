@@ -118,6 +118,18 @@ function touchDistance(a: Touch, b: Touch): number {
   return Math.hypot(dx, dy)
 }
 
+function touchMidpoint(a: Touch, b: Touch): { x: number; y: number } {
+  return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+}
+
+const MIN_SCALE = 1
+const MAX_SCALE = 4
+const TAP_ZOOM = 2.6
+
+function clampScale(value: number): number {
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value))
+}
+
 function ZoomablePreview({
   src,
   onUnzoomedBackdropClick,
@@ -125,76 +137,145 @@ function ZoomablePreview({
   src: string
   onUnzoomedBackdropClick: () => void
 }) {
+  const imgRef = useRef<HTMLImageElement>(null)
   const [scale, setScale] = useState(1)
   const [pos, setPos] = useState({ x: 0, y: 0 })
-  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
+  const transformRef = useRef({ scale: 1, x: 0, y: 0 })
+  const pinchRef = useRef<{
+    dist: number
+    scale: number
+    x: number
+    y: number
+    midX: number
+    midY: number
+  } | null>(null)
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
   const movedRef = useRef(false)
+  const [animating, setAnimating] = useState(true)
+
+  const apply = useCallback((nextScale: number, nextX: number, nextY: number) => {
+    const s = clampScale(nextScale)
+    const posX = s <= 1.02 ? 0 : nextX
+    const posY = s <= 1.02 ? 0 : nextY
+    const next = { scale: s <= 1.02 ? 1 : s, x: posX, y: posY }
+    transformRef.current = next
+    setScale(next.scale)
+    setPos({ x: next.x, y: next.y })
+  }, [])
 
   const reset = useCallback(() => {
-    setScale(1)
-    setPos({ x: 0, y: 0 })
-  }, [])
+    apply(1, 0, 0)
+  }, [apply])
 
   useEffect(() => {
     reset()
   }, [src, reset])
+
+  const zoomAround = useCallback(
+    (clientX: number, clientY: number, nextScale: number, from: { scale: number; x: number; y: number }) => {
+      const el = imgRef.current
+      if (!el) {
+        apply(nextScale, from.x, from.y)
+        return
+      }
+      const s2 = clampScale(nextScale)
+      if (s2 <= 1.02) {
+        apply(1, 0, 0)
+        return
+      }
+      const rect = el.getBoundingClientRect()
+      const current = transformRef.current
+      const layoutX = rect.left + rect.width / 2 - current.x
+      const layoutY = rect.top + rect.height / 2 - current.y
+      const fromVisualX = layoutX + from.x
+      const fromVisualY = layoutY + from.y
+      const ratio = s2 / from.scale
+      apply(
+        s2,
+        from.x + (clientX - fromVisualX) * (1 - ratio),
+        from.y + (clientY - fromVisualY) * (1 - ratio),
+      )
+    },
+    [apply],
+  )
 
   const zoomed = scale > 1.02
 
   return (
     <div
       className="relative flex h-full w-full items-center justify-center overflow-hidden"
-      style={{ touchAction: zoomed ? 'none' : 'manipulation' }}
+      style={{ touchAction: 'none' }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
-          if (zoomed) reset()
-          else onUnzoomedBackdropClick()
+          if (zoomed) {
+            setAnimating(true)
+            reset()
+          } else {
+            onUnzoomedBackdropClick()
+          }
         }
       }}
       onTouchStart={(e) => {
         movedRef.current = false
+        const t = transformRef.current
         if (e.touches.length === 2) {
-          pinchRef.current = { dist: touchDistance(e.touches[0], e.touches[1]), scale }
+          const mid = touchMidpoint(e.touches[0], e.touches[1])
+          pinchRef.current = {
+            dist: touchDistance(e.touches[0], e.touches[1]),
+            scale: t.scale,
+            x: t.x,
+            y: t.y,
+            midX: mid.x,
+            midY: mid.y,
+          }
           dragRef.current = null
+          setAnimating(false)
           return
         }
-        if (e.touches.length === 1 && zoomed) {
+        if (e.touches.length === 1 && t.scale > 1.02) {
           dragRef.current = {
             x: e.touches[0].clientX,
             y: e.touches[0].clientY,
-            px: pos.x,
-            py: pos.y,
+            px: t.x,
+            py: t.y,
           }
+          setAnimating(false)
         }
       }}
       onTouchMove={(e) => {
         if (e.touches.length === 2 && pinchRef.current) {
           movedRef.current = true
+          const start = pinchRef.current
           const dist = touchDistance(e.touches[0], e.touches[1])
-          const next = Math.min(4, Math.max(1, pinchRef.current.scale * (dist / Math.max(pinchRef.current.dist, 1))))
-          setScale(next)
-          if (next <= 1.02) setPos({ x: 0, y: 0 })
+          const mid = touchMidpoint(e.touches[0], e.touches[1])
+          const nextScale = clampScale(start.scale * (dist / Math.max(start.dist, 1)))
+          zoomAround(start.midX, start.midY, nextScale, { scale: start.scale, x: start.x, y: start.y })
+          const after = transformRef.current
+          apply(after.scale, after.x + (mid.x - start.midX), after.y + (mid.y - start.midY))
           return
         }
-        if (e.touches.length === 1 && dragRef.current && zoomed) {
+        if (e.touches.length === 1 && dragRef.current && transformRef.current.scale > 1.02) {
           const dx = e.touches[0].clientX - dragRef.current.x
           const dy = e.touches[0].clientY - dragRef.current.y
           if (Math.abs(dx) + Math.abs(dy) > 6) movedRef.current = true
-          setPos({ x: dragRef.current.px + dx, y: dragRef.current.py + dy })
+          apply(transformRef.current.scale, dragRef.current.px + dx, dragRef.current.py + dy)
         }
       }}
       onTouchEnd={() => {
         pinchRef.current = null
         dragRef.current = null
-        if (scale <= 1.05) reset()
+        if (transformRef.current.scale <= 1.05) {
+          setAnimating(true)
+          reset()
+        }
       }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
+        ref={imgRef}
         src={src}
         alt=""
-        className="max-h-full max-w-full origin-center object-contain transition-transform duration-150 ease-out"
+        className={`max-h-full max-w-full origin-center object-contain ${animating ? 'transition-transform duration-150 ease-out' : ''}`}
         style={{
           transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
           cursor: zoomed ? 'zoom-out' : 'zoom-in',
@@ -202,12 +283,13 @@ function ZoomablePreview({
         onClick={(e) => {
           e.stopPropagation()
           if (movedRef.current) return
+          setAnimating(true)
           if (zoomed) reset()
-          else setScale(2.4)
+          else zoomAround(e.clientX, e.clientY, TAP_ZOOM, transformRef.current)
         }}
       />
       <p className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-[11px] text-white/55">
-        {zoomed ? 'タップで戻す · ドラッグで移動' : 'タップで拡大 · ピンチでも拡大'}
+        {zoomed ? 'タップした場所を拡大中 · もう一度タップで戻す' : '見たい場所をタップして拡大'}
       </p>
     </div>
   )
