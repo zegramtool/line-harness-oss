@@ -102,6 +102,11 @@ images.get('/images/:key', async (c) => {
   headers.set('Content-Type', object.httpMetadata?.contentType || 'image/png');
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   headers.set('ETag', object.etag);
+  headers.set('Access-Control-Allow-Origin', '*');
+  if (c.req.query('download') === '1') {
+    const safeName = key.replace(/[^\w.\-]+/g, '_') || 'image';
+    headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
+  }
 
   return new Response(object.body, { headers });
 });

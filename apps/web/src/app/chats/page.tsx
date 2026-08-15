@@ -15,6 +15,11 @@ import {
   MAX_LINE_IMAGES_PER_PUSH,
 } from '@/lib/line-image-upload'
 import { buildScheduledPayloads } from '@/lib/build-scheduled-payloads'
+import {
+  ChatImageLightbox,
+  ChatImageThumbs,
+  collectChatImageUrls,
+} from '@/components/chats/chat-image-viewer'
 
 interface Chat {
   id: string
@@ -231,10 +236,12 @@ function ChatPendingImages({
               <button
                 type="button"
                 onClick={() => onRemove(index)}
-                className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-gray-800 text-white text-xs leading-none"
+                className="absolute -top-1.5 -right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-800 text-white"
                 aria-label="画像を削除"
               >
-                ×
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
           ))}
@@ -242,10 +249,12 @@ function ChatPendingImages({
             <button
               type="button"
               onClick={onAddClick}
-              className="h-14 w-14 rounded-lg border border-dashed border-gray-300 text-gray-500 text-xl"
+              className="inline-flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-500"
               aria-label="画像を追加"
             >
-              +
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 5v14m7-7H5" />
+              </svg>
             </button>
           )}
         </div>
@@ -568,6 +577,7 @@ export default function ChatsPage() {
   const [pendingScheduled, setPendingScheduled] = useState<ScheduledChatMessage[]>([])
   const [cancellingScheduledId, setCancellingScheduledId] = useState<string | null>(null)
   const [editingScheduledId, setEditingScheduledId] = useState<string | null>(null)
+  const [imageViewer, setImageViewer] = useState<{ urls: string[]; index: number } | null>(null)
 
   const loadPendingScheduled = useCallback(async (chatId: string) => {
     try {
@@ -1499,6 +1509,7 @@ export default function ChatsPage() {
                     const prevMsg = idx > 0 ? (chatDetail.messages ?? [])[idx - 1] : null
                     const showDateSep = !prevMsg || !sameYmd(prevMsg.createdAt, msg.createdAt)
                     const isOutgoing = msg.direction === 'outgoing'
+                    const imageGallery = collectChatImageUrls(chatDetail.messages ?? [])
 
                     // メッセージ表示の分岐
                     let bubbleContent: React.ReactNode
@@ -1509,14 +1520,13 @@ export default function ChatsPage() {
                         </div>
                       )
                     } else if (msg.messageType === 'image') {
-                      try {
-                        const parsed = JSON.parse(msg.content)
-                        bubbleContent = (
-                          <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-[200px] rounded" />
-                        )
-                      } catch {
-                        bubbleContent = <span>🖼️ [画像]</span>
-                      }
+                      bubbleContent = (
+                        <ChatImageThumbs
+                          content={msg.content}
+                          gallery={imageGallery}
+                          onOpen={(index) => setImageViewer({ urls: imageGallery, index })}
+                        />
+                      )
                     } else if (msg.messageType === 'sticker') {
                       bubbleContent = <StickerMessageImage content={msg.content} />
                     } else if (msg.messageType === 'file') {
@@ -1547,17 +1557,20 @@ export default function ChatsPage() {
                           )}
 
                           <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {/* メッセージバブル */}
-                            <div
-                              className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
-                                isOutgoing
-                                  ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
-                                  : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
-                              }`}
-                              style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
-                            >
-                              {bubbleContent}
-                            </div>
+                            {msg.messageType === 'image' ? (
+                              bubbleContent
+                            ) : (
+                              <div
+                                className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                                  isOutgoing
+                                    ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
+                                    : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
+                                }`}
+                                style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
+                              >
+                                {bubbleContent}
+                              </div>
+                            )}
                             {/* 時刻 */}
                             <span className="text-xs text-white/50 mt-0.5 px-1">
                               {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
@@ -1723,26 +1736,27 @@ export default function ChatsPage() {
                     onAddClick={() => imageInputRef.current?.click()}
                   />
                 ) : null}
-                <div className="flex items-end gap-1.5">
+                <div className="flex items-end gap-1">
                   <button
                     type="button"
                     onClick={() => imageInputRef.current?.click()}
-                    className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-600 shrink-0"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-gray-600"
                     aria-label="画像を添付"
                   >
-                    <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.5v15m7.5-7.5h-15" />
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </button>
                   <button
                     type="button"
                     onClick={() => pdfInputRef.current?.click()}
                     disabled={pdfUploading}
-                    className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-600 shrink-0 disabled:opacity-40"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-gray-600 disabled:opacity-40"
                     aria-label="PDFを添付"
                   >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 3h6l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 3v5h5" />
                     </svg>
                   </button>
                   <textarea
@@ -1771,12 +1785,12 @@ export default function ChatsPage() {
                     type="button"
                     onClick={() => void handleSendMessage()}
                     disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
-                    className="min-w-[44px] min-h-[44px] rounded-full text-white flex items-center justify-center shrink-0 disabled:opacity-40"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40"
                     style={{ backgroundColor: '#06C755' }}
                     aria-label={editingScheduledId ? '更新' : sendTiming === 'scheduled' ? '予約' : '送信'}
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
+                    <svg className="h-5 w-5 translate-x-px" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h12m0 0l-5-5m5 5l-5 5" />
                     </svg>
                   </button>
                 </div>
@@ -1944,6 +1958,14 @@ export default function ChatsPage() {
       <div className="hidden lg:block">
         <CcPromptButton prompts={ccPrompts} />
       </div>
+      {imageViewer && (
+        <ChatImageLightbox
+          urls={imageViewer.urls}
+          index={imageViewer.index}
+          onClose={() => setImageViewer(null)}
+          onIndexChange={(index) => setImageViewer((prev) => (prev ? { ...prev, index } : prev))}
+        />
+      )}
     </div>
   )
 }
