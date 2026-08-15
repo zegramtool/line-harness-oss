@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Touch } from 'react'
 
 export type ChatImageItem = {
   original: string
@@ -112,6 +112,107 @@ export function ChatImageThumbs({
   )
 }
 
+function touchDistance(a: Touch, b: Touch): number {
+  const dx = a.clientX - b.clientX
+  const dy = a.clientY - b.clientY
+  return Math.hypot(dx, dy)
+}
+
+function ZoomablePreview({
+  src,
+  onUnzoomedBackdropClick,
+}: {
+  src: string
+  onUnzoomedBackdropClick: () => void
+}) {
+  const [scale, setScale] = useState(1)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
+  const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
+  const movedRef = useRef(false)
+
+  const reset = useCallback(() => {
+    setScale(1)
+    setPos({ x: 0, y: 0 })
+  }, [])
+
+  useEffect(() => {
+    reset()
+  }, [src, reset])
+
+  const zoomed = scale > 1.02
+
+  return (
+    <div
+      className="relative flex h-full w-full items-center justify-center overflow-hidden"
+      style={{ touchAction: zoomed ? 'none' : 'manipulation' }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          if (zoomed) reset()
+          else onUnzoomedBackdropClick()
+        }
+      }}
+      onTouchStart={(e) => {
+        movedRef.current = false
+        if (e.touches.length === 2) {
+          pinchRef.current = { dist: touchDistance(e.touches[0], e.touches[1]), scale }
+          dragRef.current = null
+          return
+        }
+        if (e.touches.length === 1 && zoomed) {
+          dragRef.current = {
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY,
+            px: pos.x,
+            py: pos.y,
+          }
+        }
+      }}
+      onTouchMove={(e) => {
+        if (e.touches.length === 2 && pinchRef.current) {
+          movedRef.current = true
+          const dist = touchDistance(e.touches[0], e.touches[1])
+          const next = Math.min(4, Math.max(1, pinchRef.current.scale * (dist / Math.max(pinchRef.current.dist, 1))))
+          setScale(next)
+          if (next <= 1.02) setPos({ x: 0, y: 0 })
+          return
+        }
+        if (e.touches.length === 1 && dragRef.current && zoomed) {
+          const dx = e.touches[0].clientX - dragRef.current.x
+          const dy = e.touches[0].clientY - dragRef.current.y
+          if (Math.abs(dx) + Math.abs(dy) > 6) movedRef.current = true
+          setPos({ x: dragRef.current.px + dx, y: dragRef.current.py + dy })
+        }
+      }}
+      onTouchEnd={() => {
+        pinchRef.current = null
+        dragRef.current = null
+        if (scale <= 1.05) reset()
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        className="max-h-full max-w-full origin-center object-contain transition-transform duration-150 ease-out"
+        style={{
+          transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+          cursor: zoomed ? 'zoom-out' : 'zoom-in',
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (movedRef.current) return
+          if (zoomed) reset()
+          else setScale(2.4)
+        }}
+      />
+      <p className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-[11px] text-white/55">
+        {zoomed ? 'タップで戻す · ドラッグで移動' : 'タップで拡大 · ピンチでも拡大'}
+      </p>
+    </div>
+  )
+}
+
 export function ChatImageLightbox({
   urls,
   index,
@@ -197,7 +298,10 @@ export function ChatImageLightbox({
         </div>
       </div>
 
-      <div className="relative flex flex-1 items-center justify-center px-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+      <div
+        className="relative min-h-0 flex-1 px-1 pb-[max(8px,env(safe-area-inset-bottom))]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {hasMany && (
           <button
             type="button"
@@ -205,7 +309,7 @@ export function ChatImageLightbox({
               e.stopPropagation()
               go(-1)
             }}
-            className="absolute left-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            className="absolute left-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
             aria-label="前の画像"
           >
             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,13 +317,7 @@ export function ChatImageLightbox({
             </svg>
           </button>
         )}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={current}
-          alt=""
-          className="max-h-full max-w-full object-contain"
-          onClick={(e) => e.stopPropagation()}
-        />
+        <ZoomablePreview src={current} onUnzoomedBackdropClick={onClose} />
         {hasMany && (
           <button
             type="button"
@@ -227,7 +325,7 @@ export function ChatImageLightbox({
               e.stopPropagation()
               go(1)
             }}
-            className="absolute right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            className="absolute right-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
             aria-label="次の画像"
           >
             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
