@@ -7,6 +7,7 @@ import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
 import { useUnreadCount } from '@/contexts/unread-badge-context'
+import WebPushEnableButton from '@/components/web-push-enable-button'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -337,6 +338,7 @@ export default function Sidebar() {
           </div>
         )}
         <div className="px-6 py-4 space-y-3">
+        <WebPushEnableButton />
         <div className="space-y-0.5">
           <p className="text-xs text-gray-400">L Harness v{appVersion}</p>
           <p className="text-[10px] text-gray-400 font-mono break-all">

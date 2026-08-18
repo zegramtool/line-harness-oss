@@ -151,6 +151,30 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due ON scheduled_messages (sta
 CREATE INDEX IF NOT EXISTS idx_scheduled_messages_friend ON scheduled_messages (friend_id, status);
 
 -- ============================================================
+-- Web Push (admin PWA unread badge)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS web_push_vapid (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  public_key  TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  subject     TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+  id          TEXT PRIMARY KEY,
+  endpoint    TEXT NOT NULL,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  staff_id    TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_web_push_subscriptions_endpoint
+  ON web_push_subscriptions (endpoint);
+
+-- ============================================================
 --- Account Settings
 --- ============================================================
 CREATE TABLE IF NOT EXISTS account_settings (

@@ -632,6 +632,15 @@ async function handleEvent(
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
     if (!matched) {
       await upsertChatOnMessage(db, friend.id);
+      try {
+        const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
+        await notifyWebPushUnread(db, {
+          friendName: friend.display_name,
+          subject: workerUrl,
+        });
+      } catch (err) {
+        console.error('web push notify failed', err);
+      }
     }
 
     // イベントバス発火: message_received

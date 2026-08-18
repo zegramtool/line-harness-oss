@@ -750,6 +750,20 @@ export const api = {
         { method: 'POST', body: JSON.stringify({}) },
       ),
   },
+  webPush: {
+    vapidPublicKey: () =>
+      fetchApi<ApiResponse<{ publicKey: string }>>('/api/web-push/vapid-public-key'),
+    subscribe: (data: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+      fetchApi<ApiResponse<{ id: string }>>('/api/web-push/subscribe', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    unsubscribe: (endpoint: string) =>
+      fetchApi<ApiResponse<null>>('/api/web-push/subscribe', {
+        method: 'DELETE',
+        body: JSON.stringify({ endpoint }),
+      }),
+  },
   reminders: {
     list: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''

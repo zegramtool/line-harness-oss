@@ -32,6 +32,9 @@ export function UnreadBadgeProvider({ children }: { children: ReactNode }) {
     }
 
     void refresh()
+    void import('@/lib/web-push-client').then(({ registerChatServiceWorker, resubscribeWebPushIfGranted }) => {
+      void registerChatServiceWorker().then(() => resubscribeWebPushIfGranted())
+    })
     const id = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
     }, POLL_MS)

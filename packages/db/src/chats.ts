@@ -131,6 +131,11 @@ export function countUnreadFriends(
   return [...rankByFriend.values()].filter((rank) => rank === CHAT_STATUS_PRIORITY.unread).length;
 }
 
+export async function getUnreadFriendCount(db: D1Database): Promise<number> {
+  const row = await db.prepare(UNREAD_FRIEND_COUNT_SQL).first<{ cnt: number }>();
+  return Number(row?.cnt ?? 0);
+}
+
 function pickMergedChatFields(rows: ChatRow[]): {
   status: string;
   notes: string | null;

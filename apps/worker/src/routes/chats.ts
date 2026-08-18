@@ -12,7 +12,7 @@ import {
   getLineAccountById,
   updateChat,
   consolidateChatsForFriend,
-  UNREAD_FRIEND_COUNT_SQL,
+  getUnreadFriendCount,
   jstNow,
   createScheduledMessage,
   parseScheduledAtMs,
@@ -403,8 +403,8 @@ chats.get('/api/chats', async (c) => {
 // 未読件数（ホーム画面バッジ / メニューバッジ用）。:id より前に置く。
 chats.get('/api/chats/unread-count', async (c) => {
   try {
-    const row = await c.env.DB.prepare(UNREAD_FRIEND_COUNT_SQL).first<{ cnt: number }>();
-    return c.json({ success: true, data: { count: Number(row?.cnt ?? 0) } });
+    const count = await getUnreadFriendCount(c.env.DB);
+    return c.json({ success: true, data: { count } });
   } catch (err) {
     console.error('GET /api/chats/unread-count error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -517,6 +517,14 @@ chats.put('/api/chats/:id', async (c) => {
     await updateChat(c.env.DB, resolved.id, updates);
     const updated = await getChatById(c.env.DB, resolved.id);
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
+    if (body.status !== undefined) {
+      const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
+      c.executionCtx.waitUntil(
+        notifyWebPushUnread(c.env.DB, {
+          subject: c.env.ADMIN_PUBLIC_URL || c.env.WORKER_URL,
+        }).catch((err) => console.error('web push notify failed', err)),
+      );
+    }
     return c.json({
       success: true,
       // 公開 ID は friend_id に統一

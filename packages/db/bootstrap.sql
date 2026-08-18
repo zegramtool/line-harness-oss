@@ -56,6 +56,13 @@ CREATE TABLE ad_platforms (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE admin_sessions (
+  token       TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
 CREATE TABLE admin_users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE,
@@ -665,6 +672,22 @@ CREATE TABLE scenarios (
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , line_account_id TEXT);
 
+CREATE TABLE scheduled_messages (
+  id              TEXT PRIMARY KEY,
+  friend_id       TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  chat_id         TEXT REFERENCES chats (id) ON DELETE SET NULL,
+  message_type    TEXT NOT NULL CHECK (message_type IN ('text', 'image', 'flex', 'file')),
+  message_content TEXT NOT NULL,
+  alt_text        TEXT,
+  scheduled_at    TEXT NOT NULL,
+  status          TEXT NOT NULL CHECK (status IN ('pending', 'sending', 'sent', 'failed', 'cancelled')) DEFAULT 'pending',
+  sent_at         TEXT,
+  error_message   TEXT,
+  line_account_id TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
 CREATE TABLE scoring_rules (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -802,11 +825,33 @@ CREATE TABLE users (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE web_push_subscriptions (
+  id          TEXT PRIMARY KEY,
+  endpoint    TEXT NOT NULL,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  staff_id    TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE web_push_vapid (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  public_key  TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  subject     TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
 CREATE INDEX idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
 
 CREATE INDEX idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
 
 CREATE INDEX idx_ad_conversion_logs_status ON ad_conversion_logs (status);
+
+CREATE INDEX idx_admin_sessions_expires ON admin_sessions(expires_at);
+
+CREATE INDEX idx_admin_sessions_staff ON admin_sessions(staff_id);
 
 CREATE INDEX idx_affiliate_clicks_affiliate ON affiliate_clicks (affiliate_id);
 
@@ -940,6 +985,10 @@ CREATE INDEX idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_ind
 
 CREATE INDEX idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
 
+CREATE INDEX idx_scheduled_messages_due ON scheduled_messages (status, scheduled_at);
+
+CREATE INDEX idx_scheduled_messages_friend ON scheduled_messages (friend_id, status);
+
 CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
 CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
@@ -961,3 +1010,6 @@ CREATE INDEX idx_users_email ON users (email);
 CREATE INDEX idx_users_external_id ON users (external_id);
 
 CREATE INDEX idx_users_phone ON users (phone);
+
+CREATE UNIQUE INDEX idx_web_push_subscriptions_endpoint
+  ON web_push_subscriptions (endpoint);
