@@ -1,9 +1,10 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   clearClientSession,
   establishSessionAfterLogin,
+  getRememberDevicePreference,
   shouldPreferBearerAuth,
 } from '@/lib/session-auth'
 
@@ -11,7 +12,14 @@ export default function LoginPage() {
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [rememberDevice, setRememberDevice] = useState(true)
+  const [mobileAuth, setMobileAuth] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    setMobileAuth(shouldPreferBearerAuth())
+    setRememberDevice(getRememberDevicePreference())
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,7 +63,9 @@ export default function LoginPage() {
       }
 
       const loginData = await res.json()
-      const mode = await establishSessionAfterLogin(apiUrl, trimmedKey, loginData)
+      const mode = await establishSessionAfterLogin(apiUrl, trimmedKey, loginData, {
+        persistBearer: rememberDevice,
+      })
       if (mode === 'bearer') {
         console.info('[auth] mobile bearer session established')
       }
@@ -95,6 +105,23 @@ export default function LoginPage() {
             />
           </div>
 
+          {mobileAuth && (
+            <label className="mb-4 flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={(e) => setRememberDevice(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+              />
+              <span>
+                この端末に記憶する
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  最大7日。タブを閉じても入り直さなくて大丈夫です。ログアウトで消えます。
+                </span>
+              </span>
+            </label>
+          )}
+
           {error && (
             <p className="text-sm text-red-600 mb-4">{error}</p>
           )}
@@ -110,7 +137,9 @@ export default function LoginPage() {
         </form>
 
         <p className="text-xs text-gray-400 mt-4 leading-relaxed">
-          iPhone の Safari では Cookie の代わりに短命セッショントークンで認証します（タブを閉じると再ログインが必要です）。APIキー自体は端末に保存しません。
+          {mobileAuth
+            ? 'iPhone / Android では Cookie の代わりにセッショントークンで認証します。APIキー自体は端末に保存しません。'
+            : 'PC では Cookie で最大7日ログインが維持されます。'}
         </p>
       </div>
     </div>
