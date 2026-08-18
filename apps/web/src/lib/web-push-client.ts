@@ -39,10 +39,12 @@ export async function getWebPushStatus(): Promise<WebPushStatus> {
   return 'needs-permission'
 }
 
+export const SERVICE_WORKER_URL = '/sw.js?v=3'
+
 export async function registerChatServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null
   try {
-    return await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    return await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: '/' })
   } catch {
     return null
   }
