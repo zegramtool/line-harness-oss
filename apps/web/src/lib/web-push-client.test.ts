@@ -21,14 +21,19 @@ describe('display mode helpers', () => {
     expect(isStandaloneDisplay()).toBe(false)
   })
 
-  test('Service Worker の URL をバージョン付きにして iOS に再取得させる', () => {
-    expect(SERVICE_WORKER_URL).toMatch(/^\/sw\.js\?v=/)
+  test('Service Worker は /sw.js に固定する（クエリ付きは別 SW になり Push が古い方に残る）', () => {
+    expect(SERVICE_WORKER_URL).toBe('/sw.js')
   })
 
   test('sw.js は iOS 向けに navigator.setAppBadge を呼ぶ', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const sw = readFileSync(resolve(here, '../../public/sw.js'), 'utf8')
-    expect(sw).toContain('nav.setAppBadge')
+    expect(sw).toContain('setAppBadge')
     expect(sw).toContain('self.navigator')
+    expect(sw).toContain('badgeCount')
+    expect(sw).toContain('web_push')
+    expect(sw).toContain('Math.max(1')
+    expect(sw).not.toContain('clearAppBadge')
+    expect(SERVICE_WORKER_URL.includes('?')).toBe(false)
   })
 })

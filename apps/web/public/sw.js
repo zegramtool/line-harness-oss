@@ -1,4 +1,4 @@
-/* v3: iOS は Service Worker でも navigator.setAppBadge を使う（WebKit 公式） */
+/* v5: Declarative Web Push の app_badge。古い iOS は navigator.setAppBadge */
 self.addEventListener('install', () => {
   self.skipWaiting()
 })
@@ -14,14 +14,34 @@ self.addEventListener('push', (event) => {
 function readPushData(event) {
   const fallback = {
     unreadCount: 1,
+    badgeCount: 1,
     title: '未読のチャット',
     body: '新しいメッセージがあります',
     url: '/chats/',
   }
   try {
     if (!event.data) return fallback
-    const parsed = event.data.json()
+    let parsed = event.data.json()
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        return fallback
+      }
+    }
     if (!parsed || typeof parsed !== 'object') return fallback
+    const note = parsed.notification
+    if (parsed.web_push === 8030 && note && typeof note === 'object') {
+      const badgeRaw = note.app_badge ?? parsed.app_badge ?? note.data?.badgeCount
+      const badgeCount = Math.max(1, Math.floor(Number(badgeRaw) || 1))
+      return {
+        unreadCount: Number(note.data?.unreadCount) || badgeCount,
+        badgeCount,
+        title: note.title || fallback.title,
+        body: note.body || fallback.body,
+        url: (note.data && note.data.url) || fallback.url,
+      }
+    }
     return { ...fallback, ...parsed }
   } catch {
     return fallback
@@ -29,21 +49,27 @@ function readPushData(event) {
 }
 
 function applyAppBadgeFromWorker(count) {
-  const n = Math.max(0, Math.floor(Number(count) || 0))
-  const nav = self.navigator
-  if (n > 0) {
-    if (nav && typeof nav.setAppBadge === 'function') return nav.setAppBadge(n)
-    if (typeof self.registration.setAppBadge === 'function') return self.registration.setAppBadge(n)
-  } else {
-    if (nav && typeof nav.clearAppBadge === 'function') return nav.clearAppBadge()
-    if (typeof self.registration.clearAppBadge === 'function') return self.registration.clearAppBadge()
+  const n = Math.max(1, Math.floor(Number(count) || 1))
+  const tasks = []
+  const trySet = (target) => {
+    if (!target) return
+    try {
+      const fn = target.setAppBadge
+      if (typeof fn === 'function') tasks.push(fn.call(target, n))
+    } catch {
+      // 非対応
+    }
   }
-  return Promise.resolve()
+  // iOS は navigator.setAppBadge。registration だけだと無視されることがある
+  trySet(self.navigator)
+  trySet(typeof navigator !== 'undefined' ? navigator : null)
+  trySet(self.registration)
+  return tasks.length ? Promise.allSettled(tasks) : Promise.resolve()
 }
 
 async function handlePush(event) {
   const data = readPushData(event)
-  const count = Number(data.unreadCount) || 0
+  const count = data.badgeCount ?? data.unreadCount
   await Promise.all([
     applyAppBadgeFromWorker(count),
     self.registration.showNotification(data.title || '未読のチャット', {
@@ -55,6 +81,8 @@ async function handlePush(event) {
       data: { url: data.url || '/chats/' },
     }),
   ])
+  // iOS は通知表示後の setAppBadge が効くことがある
+  await applyAppBadgeFromWorker(count)
 }
 
 self.addEventListener('notificationclick', (event) => {

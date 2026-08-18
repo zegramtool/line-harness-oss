@@ -24,7 +24,17 @@ export default function WebPushEnableButton() {
     }
   }, [])
 
-  if (!status || status === 'unsupported' || status === 'subscribed') return null
+  if (!status || status === 'unsupported') return null
+
+  if (status === 'subscribed') {
+    return (
+      <p className="px-3 py-2 text-[11px] leading-snug text-gray-400">
+        通知オン。ホームの数字は iOS 18.4 以降。付かないときは 設定 → 通知 → チャット →
+        <span className="font-medium text-gray-600"> バッジ </span>
+        をオンにする
+      </p>
+    )
+  }
 
   const label =
     status === 'needs-home-screen'

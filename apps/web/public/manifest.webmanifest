@@ -2,6 +2,7 @@
   "name": "TacTeQ チャット",
   "short_name": "チャット",
   "description": "LINE公式アカウント 個別チャット",
+  "id": "/",
   "start_url": "/chats/",
   "scope": "/",
   "display": "standalone",
