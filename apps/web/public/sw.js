@@ -1,4 +1,4 @@
-/* TacTeQ 管理画面 Web Push — アプリ終了中の未読バッジ更新 */
+/* v3: iOS は Service Worker でも navigator.setAppBadge を使う（WebKit 公式） */
 self.addEventListener('install', () => {
   self.skipWaiting()
 })
@@ -11,36 +11,50 @@ self.addEventListener('push', (event) => {
   event.waitUntil(handlePush(event))
 })
 
-async function handlePush(event) {
-  let data = {
+function readPushData(event) {
+  const fallback = {
     unreadCount: 1,
     title: '未読のチャット',
     body: '新しいメッセージがあります',
     url: '/chats/',
   }
   try {
-    if (event.data) data = { ...data, ...event.data.json() }
+    if (!event.data) return fallback
+    const parsed = event.data.json()
+    if (!parsed || typeof parsed !== 'object') return fallback
+    return { ...fallback, ...parsed }
   } catch {
-    // ペイロード無しでも通知は出す（iOS は表示必須）
+    return fallback
   }
+}
+
+function applyAppBadgeFromWorker(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0))
+  const nav = self.navigator
+  if (n > 0) {
+    if (nav && typeof nav.setAppBadge === 'function') return nav.setAppBadge(n)
+    if (typeof self.registration.setAppBadge === 'function') return self.registration.setAppBadge(n)
+  } else {
+    if (nav && typeof nav.clearAppBadge === 'function') return nav.clearAppBadge()
+    if (typeof self.registration.clearAppBadge === 'function') return self.registration.clearAppBadge()
+  }
+  return Promise.resolve()
+}
+
+async function handlePush(event) {
+  const data = readPushData(event)
   const count = Number(data.unreadCount) || 0
-  try {
-    if (count > 0 && self.registration.setAppBadge) {
-      await self.registration.setAppBadge(count)
-    } else if (self.registration.clearAppBadge) {
-      await self.registration.clearAppBadge()
-    }
-  } catch {
-    // Badging API 非対応
-  }
-  await self.registration.showNotification(data.title || '未読のチャット', {
-    body: data.body || '新しいメッセージがあります',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    tag: 'tacteq-unread',
-    renotify: true,
-    data: { url: data.url || '/chats/' },
-  })
+  await Promise.all([
+    applyAppBadgeFromWorker(count),
+    self.registration.showNotification(data.title || '未読のチャット', {
+      body: data.body || '新しいメッセージがあります',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: 'tacteq-unread',
+      renotify: true,
+      data: { url: data.url || '/chats/' },
+    }),
+  ])
 }
 
 self.addEventListener('notificationclick', (event) => {
