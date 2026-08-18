@@ -55,14 +55,19 @@ export async function sendWebPush(
 
 export async function notifyWebPushUnread(
   db: D1Database,
-  opts: { friendName?: string | null; subject?: string; adminPublicUrl?: string } = {},
+  opts: { friendName?: string | null; friendId?: string | null; preview?: string | null; subject?: string; adminPublicUrl?: string } = {},
 ): Promise<{ sent: number; gone: number }> {
   const subscriptions = await listWebPushSubscriptions(db);
   if (subscriptions.length === 0) return { sent: 0, gone: 0 };
 
   const vapid = await getOrCreateVapidKeys(db, opts.subject);
   const unreadCount = await getUnreadFriendCount(db);
-  const unread = buildUnreadPushData({ unreadCount, friendName: opts.friendName });
+  const unread = buildUnreadPushData({
+    unreadCount,
+    friendName: opts.friendName,
+    friendId: opts.friendId,
+    preview: opts.preview,
+  });
   const data = buildDeclarativeUnreadPush(unread, opts.adminPublicUrl || DEFAULT_SUBJECT);
 
   let sent = 0;

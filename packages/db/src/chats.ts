@@ -237,14 +237,20 @@ export async function updateChat(
   await db.prepare(`UPDATE chats SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
 }
 
+/** お客さんの自発メッセージ後の status。対応中でも未読に戻し、一覧で誰か分かるようにする。 */
+export function statusAfterIncomingCustomerMessage(_current?: string | null): 'unread' {
+  return 'unread';
+}
+
 /** 友だちからメッセージ受信時にチャットを作成/更新 */
 export async function upsertChatOnMessage(db: D1Database, friendId: string): Promise<ChatRow> {
   const existing = await getChatByFriendId(db, friendId);
   const now = jstNow();
   if (existing) {
-    // resolvedだった場合はunreadに戻す
-    const newStatus = existing.status === 'resolved' ? 'unread' : existing.status;
-    await updateChat(db, existing.id, { status: newStatus, lastMessageAt: now });
+    await updateChat(db, existing.id, {
+      status: statusAfterIncomingCustomerMessage(existing.status),
+      lastMessageAt: now,
+    });
     return (await getChatById(db, existing.id))!;
   }
   return createChat(db, { friendId });

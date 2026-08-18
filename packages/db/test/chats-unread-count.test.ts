@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { countUnreadFriends } from '../src/chats.js';
+import { countUnreadFriends, statusAfterIncomingCustomerMessage } from '../src/chats.js';
 
 describe('countUnreadFriends', () => {
   test('友だち単位で unread だけを数える', () => {
@@ -31,5 +31,13 @@ describe('countUnreadFriends', () => {
         { friendId: 'b', status: 'in_progress' },
       ]),
     ).toBe(0);
+  });
+});
+
+describe('statusAfterIncomingCustomerMessage', () => {
+  test('対応中・解決済でも未読に戻す', () => {
+    expect(statusAfterIncomingCustomerMessage('in_progress')).toBe('unread');
+    expect(statusAfterIncomingCustomerMessage('resolved')).toBe('unread');
+    expect(statusAfterIncomingCustomerMessage('unread')).toBe('unread');
   });
 });

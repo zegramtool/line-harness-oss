@@ -694,15 +694,24 @@ export default function ChatsPage() {
     loadChats()
   }, [loadChats])
 
-  // Deep-link from other pages (e.g. /form-submissions): ?friend=<friendId>
-  // chat list returns id = friend_id, so selectedChatId === friendId is correct.
-  // If no chat exists yet, loadChatDetail will fail and the user can fall back to
-  // the friend list — acceptable for now.
+  // Deep-link: 通知タップやフォームからの ?friend=<friendId>
+  // chat list の id = friend_id。pageshow は iOS が PWA を起こしたときに再適用する。
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const friendId = params.get('friend')
-    if (friendId) setSelectedChatId(friendId)
+    const applyFriendQuery = () => {
+      const friendId = new URLSearchParams(window.location.search).get('friend')
+      if (!friendId) return
+      setSelectedChatId(friendId)
+      setStatusFilter('all')
+      setUnansweredOnly(false)
+    }
+    applyFriendQuery()
+    window.addEventListener('pageshow', applyFriendQuery)
+    window.addEventListener('popstate', applyFriendQuery)
+    return () => {
+      window.removeEventListener('pageshow', applyFriendQuery)
+      window.removeEventListener('popstate', applyFriendQuery)
+    }
   }, [])
 
   useEffect(() => {
