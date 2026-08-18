@@ -12,6 +12,7 @@ import {
   getLineAccountById,
   updateChat,
   consolidateChatsForFriend,
+  UNREAD_FRIEND_COUNT_SQL,
   jstNow,
   createScheduledMessage,
   parseScheduledAtMs,
@@ -395,6 +396,17 @@ chats.get('/api/chats', async (c) => {
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/chats error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// 未読件数（ホーム画面バッジ / メニューバッジ用）。:id より前に置く。
+chats.get('/api/chats/unread-count', async (c) => {
+  try {
+    const row = await c.env.DB.prepare(UNREAD_FRIEND_COUNT_SQL).first<{ cnt: number }>();
+    return c.json({ success: true, data: { count: Number(row?.cnt ?? 0) } });
+  } catch (err) {
+    console.error('GET /api/chats/unread-count error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

@@ -679,6 +679,8 @@ export const api = {
       ),
   },
   chats: {
+    unreadCount: () =>
+      fetchApi<ApiResponse<{ count: number }>>('/api/chats/unread-count'),
     list: (params?: { status?: string; operatorId?: string; accountId?: string; unansweredOnly?: boolean }) => {
       const query: Record<string, string> = {}
       if (params?.status) query.status = params.status

@@ -100,11 +100,36 @@ export async function getChatByFriendId(db: D1Database, friendId: string): Promi
  * 同一 friend に chats 行が複数あると、保存先と表示先がずれる。
  * 1行に統合し、オペレーター更新 (status/notes) を優先してマージする。
  */
-const CHAT_STATUS_PRIORITY: Record<string, number> = {
+export const CHAT_STATUS_PRIORITY: Record<string, number> = {
   in_progress: 3,
   unread: 2,
   resolved: 1,
 };
+
+/** 友だち単位でマージした status が unread の件数。ホーム画面バッジ用。 */
+export const UNREAD_FRIEND_COUNT_SQL = `SELECT COUNT(*) AS cnt FROM (
+         SELECT friend_id,
+           MAX(CASE status
+             WHEN 'in_progress' THEN 3
+             WHEN 'unread' THEN 2
+             WHEN 'resolved' THEN 1
+             ELSE 0
+           END) AS status_rank
+         FROM chats
+         GROUP BY friend_id
+       )
+       WHERE status_rank = 2`;
+
+export function countUnreadFriends(
+  rows: Array<{ friendId: string; status: string }>,
+): number {
+  const rankByFriend = new Map<string, number>();
+  for (const row of rows) {
+    const rank = CHAT_STATUS_PRIORITY[row.status] ?? 0;
+    rankByFriend.set(row.friendId, Math.max(rankByFriend.get(row.friendId) ?? 0, rank));
+  }
+  return [...rankByFriend.values()].filter((rank) => rank === CHAT_STATUS_PRIORITY.unread).length;
+}
 
 function pickMergedChatFields(rows: ChatRow[]): {
   status: string;

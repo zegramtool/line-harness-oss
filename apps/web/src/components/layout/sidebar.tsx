@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
+import { useUnreadCount } from '@/contexts/unread-badge-context'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -216,6 +217,8 @@ export default function Sidebar() {
     return () => window.removeEventListener(OPEN_SIDEBAR_EVENT, open)
   }, [])
 
+  const unreadCount = useUnreadCount()
+
   // 未対応件数 polling — メニュー項目にバッジを出す。5 分間隔。
   const [unansweredCount, setUnansweredCount] = useState<number>(0)
   useEffect(() => {
@@ -294,6 +297,15 @@ export default function Sidebar() {
                 >
                   <NavIcon d={item.icon} />
                   <span className="flex-1">{item.label}</span>
+                  {item.href === '/chats' && unreadCount > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                        active ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
+                      }`}
+                    >
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
                   {item.href === '/notifications' && unansweredCount > 0 && (
                     <span
                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${

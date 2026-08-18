@@ -3,9 +3,16 @@ import './globals.css'
 import AppShell from '@/components/app-shell'
 
 export const metadata: Metadata = {
-  title: 'L Harness',
-  description: 'L Harness 管理画面',
+  title: 'チャット',
+  description: 'TacTeQ 個別チャット',
   manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',

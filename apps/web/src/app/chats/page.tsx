@@ -16,6 +16,8 @@ import {
 } from '@/lib/line-image-upload'
 import { buildScheduledPayloads } from '@/lib/build-scheduled-payloads'
 import { isUndoSendWindow, remainingUndoSeconds, UNDO_SEND_SECONDS } from '@/lib/undo-send'
+import { notifyUnreadCountMayHaveChanged } from '@/lib/app-badge'
+import { useUnreadCount } from '@/contexts/unread-badge-context'
 import {
   ChatImageLightbox,
   ChatImageThumbs,
@@ -531,6 +533,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 
 export default function ChatsPage() {
   const { selectedAccountId } = useAccount()
+  const unreadCount = useUnreadCount()
   const [chats, setChats] = useState<Chat[]>([])
   const [allFriends, setAllFriends] = useState<FriendItem[]>([])
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -632,6 +635,7 @@ export default function ChatsPage() {
       const chatRes = await api.chats.list(params)
       if (chatRes.success) {
         setChats(chatRes.data as unknown as Chat[])
+        notifyUnreadCountMayHaveChanged()
       }
     } catch {
       setError('チャットの読み込みに失敗しました。もう一度お試しください。')
@@ -1027,6 +1031,7 @@ export default function ChatsPage() {
       setChats((prev) =>
         prev.map((c) => (c.id === selectedChatId ? { ...c, status: newStatus } : c)),
       )
+      notifyUnreadCountMayHaveChanged()
       return true
     } catch {
       setError('ステータスの更新に失敗しました。')
@@ -1152,12 +1157,17 @@ export default function ChatsPage() {
             <button
               type="button"
               onClick={() => window.dispatchEvent(new Event('lh:open-sidebar'))}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700"
-              aria-label="メニュー"
+              className="relative min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700"
+              aria-label={unreadCount > 0 ? `メニュー（未読 ${unreadCount} 件）` : 'メニュー'}
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
+              {unreadCount > 0 && (
+                <span className="absolute top-1.5 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-4 text-center tabular-nums">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
             <h1 className="text-base font-bold text-gray-900">トーク</h1>
             <div className="min-w-[44px]" aria-hidden />
