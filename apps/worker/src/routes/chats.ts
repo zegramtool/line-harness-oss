@@ -16,13 +16,11 @@ import {
   createScheduledMessage,
   parseScheduledAtMs,
   getPendingScheduledMessagesForFriend,
+  UNDO_SEND_DELAY_MS,
+  undoSendScheduledAt,
+  isUndoSendWindow,
 } from '@line-crm/db';
-import {
-  logOutgoingFriendMessage,
-  logOutgoingFriendImages,
-  parseImagePayloads,
-  pushMessageToFriend,
-} from '../services/push-friend-message.js';
+import { delayThenDeliverScheduledMessage } from '../services/scheduled-message-delivery.js';
 import type { Env } from '../index.js';
 
 const chats = new Hono<Env>();
@@ -565,7 +563,7 @@ chats.post('/api/chats/:id/send', async (c) => {
     const body = await c.req.json<{ messageType?: string; content: string; scheduledAt?: string }>();
     if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
 
-    const { friend, accessToken } = await resolveFriendAndAccessToken(
+    const { friend } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
       c.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -603,21 +601,41 @@ chats.post('/api/chats/:id/send', async (c) => {
       });
     }
 
-    const { LineClient } = await import('@line-crm/line-sdk');
-    const lineClient = new LineClient(accessToken);
-    await pushMessageToFriend(lineClient, friend.line_user_id, messageType, body.content);
+    const scheduled = await createScheduledMessage(c.env.DB, {
+      friendId: friend.id,
+      chatId: chat.id,
+      messageType: messageType as 'text' | 'image' | 'flex' | 'file',
+      messageContent: body.content,
+      scheduledAt: undoSendScheduledAt(),
+      lineAccountId,
+    });
 
-    let logId: string;
-    if (messageType === 'image') {
-      const images = parseImagePayloads(body.content);
-      const logIds = await logOutgoingFriendImages(c.env.DB, friend.id, images, 'manual');
-      logId = logIds[0] ?? '';
-    } else {
-      logId = await logOutgoingFriendMessage(c.env.DB, friend.id, messageType, body.content, 'manual');
+    try {
+      const ctx = c.executionCtx as ExecutionContext;
+      ctx.waitUntil(
+        delayThenDeliverScheduledMessage(
+          c.env.DB,
+          c.env.LINE_CHANNEL_ACCESS_TOKEN,
+          scheduled.id,
+          UNDO_SEND_DELAY_MS,
+        ).catch((err) => {
+          console.error('undo-send waitUntil delivery failed:', scheduled.id, err);
+        }),
+      );
+    } catch (kickErr) {
+      console.warn('waitUntil unavailable, cron/client will send undo message:', kickErr);
     }
-    await updateChat(c.env.DB, chat.id, { status: 'in_progress', lastMessageAt: jstNow() });
 
-    return c.json({ success: true, data: { sent: true, messageId: logId } });
+    return c.json({
+      success: true,
+      data: {
+        delayed: true,
+        undo: true,
+        undoSeconds: UNDO_SEND_DELAY_MS / 1000,
+        id: scheduled.id,
+        scheduledAt: scheduled.scheduled_at,
+      },
+    });
   } catch (err) {
     console.error('POST /api/chats/:id/send error:', err);
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -642,6 +660,7 @@ chats.get('/api/chats/:id/scheduled-messages', async (c) => {
         scheduledAt: r.scheduled_at,
         status: r.status,
         createdAt: r.created_at,
+        undo: isUndoSendWindow(r.created_at, r.scheduled_at),
       })),
     });
   } catch (err) {

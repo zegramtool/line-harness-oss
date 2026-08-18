@@ -6,6 +6,7 @@ import {
   updateScheduledMessage,
   type ScheduledMessageType,
 } from '@line-crm/db';
+import { deliverScheduledMessageById } from '../services/scheduled-message-delivery.js';
 import type { Env } from '../index.js';
 
 const scheduledMessages = new Hono<Env>();
@@ -105,6 +106,51 @@ scheduledMessages.delete('/api/scheduled-messages/:id', async (c) => {
     return c.json({ success: true, data: { id, status: 'cancelled' } });
   } catch (err) {
     console.error('DELETE scheduled-messages error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+const DELIVER_GRACE_MS = 2_000;
+
+// POST /api/scheduled-messages/:id/deliver — 期限到来（取り消しウィンドウ終了）後に即送信
+scheduledMessages.post('/api/scheduled-messages/:id/deliver', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const existing = await getScheduledMessageById(c.env.DB, id);
+    if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
+    if (existing.status === 'sent') {
+      return c.json({ success: true, data: { id, sent: true, alreadySent: true } });
+    }
+    if (existing.status === 'sending') {
+      return c.json({ success: true, data: { id, sent: false, inProgress: true } });
+    }
+    if (existing.status !== 'pending') {
+      return c.json({ success: false, error: 'Only pending messages can be delivered' }, 400);
+    }
+
+    const dueMs = parseScheduledAtMs(existing.scheduled_at);
+    if (!Number.isFinite(dueMs) || dueMs > Date.now() + DELIVER_GRACE_MS) {
+      return c.json({ success: false, error: 'Message is not due yet' }, 400);
+    }
+
+    const result = await deliverScheduledMessageById(
+      c.env.DB,
+      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      id,
+    );
+    if (result === 'failed') {
+      return c.json({ success: false, error: 'Delivery failed' }, 500);
+    }
+    return c.json({
+      success: true,
+      data: {
+        id,
+        sent: result === 'sent',
+        skipped: result === 'skipped',
+      },
+    });
+  } catch (err) {
+    console.error('POST scheduled-messages deliver error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
