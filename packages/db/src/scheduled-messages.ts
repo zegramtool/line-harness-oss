@@ -3,6 +3,31 @@ import { jstNow, toJstString } from './utils.js';
 export type ScheduledMessageStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled';
 export type ScheduledMessageType = 'text' | 'image' | 'flex' | 'file';
 
+/** 「今すぐ送る」の取り消し可能時間。この間は LINE へ送らず、取消できる。 */
+export const UNDO_SEND_DELAY_MS = 12_000;
+/** created_at と scheduled_at の差がこの以内なら取り消し付き即時送信と判定する。 */
+export const UNDO_SEND_DETECT_MAX_MS = 20_000;
+
+export function isUndoSendWindow(createdAt: string, scheduledAt: string): boolean {
+  const createdMs = Date.parse(createdAt);
+  const scheduledMs = parseScheduledAtMs(scheduledAt);
+  if (!Number.isFinite(createdMs) || !Number.isFinite(scheduledMs)) return false;
+  const delta = scheduledMs - createdMs;
+  return delta > 0 && delta <= UNDO_SEND_DETECT_MAX_MS;
+}
+
+export function undoSendScheduledAt(now = new Date()): string {
+  return toJstString(new Date(now.getTime() + UNDO_SEND_DELAY_MS));
+}
+
+/** 取り消し付き即時送信はオペレーター手動扱い。通常予約は scheduled。 */
+export function outgoingSourceForScheduledMessage(
+  createdAt: string,
+  scheduledAt: string,
+): 'manual' | 'scheduled' {
+  return isUndoSendWindow(createdAt, scheduledAt) ? 'manual' : 'scheduled';
+}
+
 export interface ScheduledMessageRow {
   id: string;
   friend_id: string;

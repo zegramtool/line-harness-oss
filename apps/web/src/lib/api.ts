@@ -43,6 +43,7 @@ export type ScheduledChatMessage = {
   scheduledAt: string
   status: string
   createdAt: string
+  undo?: boolean
 }
 
 export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
@@ -703,7 +704,16 @@ export const api = {
         body: JSON.stringify(data),
       }),
     send: (id: string, data: { content: string; messageType?: string; scheduledAt?: string }) =>
-      fetchApi<ApiResponse<{ sent?: boolean; scheduled?: boolean; id?: string; scheduledAt?: string; messageId?: string }>>(
+      fetchApi<ApiResponse<{
+        sent?: boolean
+        scheduled?: boolean
+        delayed?: boolean
+        undo?: boolean
+        undoSeconds?: number
+        id?: string
+        scheduledAt?: string
+        messageId?: string
+      }>>(
         `/api/chats/${id}/send`,
         {
           method: 'POST',
@@ -731,6 +741,11 @@ export const api = {
       fetchApi<ApiResponse<{ id: string; status: string }>>(
         `/api/scheduled-messages/${id}`,
         { method: 'DELETE' },
+      ),
+    deliver: (id: string) =>
+      fetchApi<ApiResponse<{ id: string; sent?: boolean; alreadySent?: boolean; inProgress?: boolean; skipped?: boolean }>>(
+        `/api/scheduled-messages/${id}/deliver`,
+        { method: 'POST', body: JSON.stringify({}) },
       ),
   },
   reminders: {

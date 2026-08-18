@@ -15,6 +15,7 @@ import {
   MAX_LINE_IMAGES_PER_PUSH,
 } from '@/lib/line-image-upload'
 import { buildScheduledPayloads } from '@/lib/build-scheduled-payloads'
+import { isUndoSendWindow, remainingUndoSeconds, UNDO_SEND_SECONDS } from '@/lib/undo-send'
 import {
   ChatImageLightbox,
   ChatImageThumbs,
@@ -159,6 +160,12 @@ function scheduledPreviewContent(msg: ScheduledChatMessage): string {
     return '[画像]'
   }
   return `[${msg.messageType}]`
+}
+
+function isUndoScheduledItem(item: ScheduledChatMessage): boolean {
+  if (item.undo === true) return true
+  if (item.undo === false) return false
+  return isUndoSendWindow(item.createdAt, item.scheduledAt)
 }
 
 function parseScheduledImages(content: string): LineImageUrls[] {
@@ -530,8 +537,6 @@ export default function ChatsPage() {
   const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null)
   const [chatDetail, setChatDetail] = useState<ChatDetail | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const statusFilterRef = useRef<StatusFilter>('all')
-  const unansweredOnlyRef = useRef(false)
   const [unansweredOnly, setUnansweredOnly] = useState(() => {
     if (typeof window === 'undefined') return false
     return new URLSearchParams(window.location.search).get('unanswered') === '1'
@@ -577,6 +582,8 @@ export default function ChatsPage() {
   const [pendingScheduled, setPendingScheduled] = useState<ScheduledChatMessage[]>([])
   const [cancellingScheduledId, setCancellingScheduledId] = useState<string | null>(null)
   const [editingScheduledId, setEditingScheduledId] = useState<string | null>(null)
+  const [undoNowMs, setUndoNowMs] = useState(() => Date.now())
+  const flushingUndoIdsRef = useRef(new Set<string>())
   const [imageViewer, setImageViewer] = useState<{ urls: string[]; index: number } | null>(null)
 
   const loadPendingScheduled = useCallback(async (chatId: string) => {
@@ -587,6 +594,9 @@ export default function ChatsPage() {
       setPendingScheduled([])
     }
   }, [])
+
+  const undoPending = pendingScheduled.filter(isUndoScheduledItem)
+  const laterScheduled = pendingScheduled.filter((item) => !isUndoScheduledItem(item))
 
   useEffect(() => {
     try {
@@ -643,10 +653,6 @@ export default function ChatsPage() {
 
   useEffect(() => { void loadAllFriends() }, [loadAllFriends])
 
-  // Keep refs in sync so setChats updater can read the latest filter without stale closure
-  useEffect(() => { statusFilterRef.current = statusFilter }, [statusFilter])
-  useEffect(() => { unansweredOnlyRef.current = unansweredOnly }, [unansweredOnly])
-
   // Load/save sendMode preference (guarded — privacy-restricted browsers throw)
   useEffect(() => {
     try {
@@ -658,9 +664,9 @@ export default function ChatsPage() {
     try { localStorage.setItem('chat.sendMode', sendMode) } catch { /* ignore */ }
   }, [sendMode])
 
-  const loadChatDetail = useCallback(async (chatId: string) => {
-    setDetailLoading(true)
-    setError('')
+  const loadChatDetail = useCallback(async (chatId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) setDetailLoading(true)
+    if (!options?.silent) setError('')
     try {
       const res = await api.chats.get(chatId)
       if (res.success) {
@@ -676,7 +682,7 @@ export default function ChatsPage() {
       const msg = err instanceof Error ? err.message : String(err)
       setError(`チャット詳細の読み込みに失敗しました: ${msg}`)
     } finally {
-      setDetailLoading(false)
+      if (!options?.silent) setDetailLoading(false)
     }
   }, [])
 
@@ -704,6 +710,40 @@ export default function ChatsPage() {
       setPendingScheduled([])
     }
   }, [selectedChatId, loadChatDetail, loadPendingScheduled])
+
+  useEffect(() => {
+    if (undoPending.length === 0) return
+    setUndoNowMs(Date.now())
+    const timer = window.setInterval(() => setUndoNowMs(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [undoPending.length])
+
+  const flushUndoSend = useCallback(async (id: string) => {
+    if (flushingUndoIdsRef.current.has(id)) return
+    flushingUndoIdsRef.current.add(id)
+    try {
+      const res = await api.scheduledMessages.deliver(id)
+      if (res.success && res.data?.inProgress) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200))
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '送信に失敗しました。'
+      if (!msg.includes('400')) setError(msg)
+    } finally {
+      flushingUndoIdsRef.current.delete(id)
+      if (selectedChatId) {
+        await loadPendingScheduled(selectedChatId)
+        await loadChatDetail(selectedChatId, { silent: true })
+      }
+    }
+  }, [selectedChatId, loadPendingScheduled, loadChatDetail])
+
+  useEffect(() => {
+    for (const item of undoPending) {
+      if (remainingUndoSeconds(item.scheduledAt, undoNowMs) > 0) continue
+      void flushUndoSend(item.id)
+    }
+  }, [undoPending, undoNowMs, flushUndoSend])
 
   // Surface deep-linked chats in the sidebar even when the current account
   // filter or status filter would exclude them — otherwise the user replies
@@ -845,16 +885,20 @@ export default function ChatsPage() {
     }
   }, [showLoadingIndicator, loadingSeconds])
 
-  const handleCancelScheduled = async (id: string) => {
-    if (!window.confirm('この予約送信を取り消しますか？\n（送信前であればいつでも取消できます）')) {
-      return
+  const handleCancelScheduled = async (id: string, options?: { confirm?: boolean }) => {
+    const skipConfirm = options?.confirm === false
+    if (!skipConfirm) {
+      if (!window.confirm('この予約送信を取り消しますか？\n（送信前であればいつでも取消できます）')) {
+        return
+      }
     }
     setCancellingScheduledId(id)
     setError('')
     try {
       const res = await api.scheduledMessages.cancel(id)
       if (!res.success) {
-        setError('予約の取消に失敗しました。')
+        setError(res.error ?? (skipConfirm ? '取り消せませんでした。送信が始まった可能性があります。' : '予約の取消に失敗しました。'))
+        if (selectedChatId) await loadPendingScheduled(selectedChatId)
         return
       }
       if (editingScheduledId === id) {
@@ -864,9 +908,16 @@ export default function ChatsPage() {
         await loadPendingScheduled(selectedChatId)
       }
     } catch {
-      setError('予約の取消に失敗しました。')
+      setError(skipConfirm ? '取り消せませんでした。送信が始まった可能性があります。' : '予約の取消に失敗しました。')
     } finally {
       setCancellingScheduledId(null)
+    }
+  }
+
+  const handleCancelAllUndo = async () => {
+    const ids = undoPending.map((item) => item.id)
+    for (const id of ids) {
+      await handleCancelScheduled(id, { confirm: false })
     }
   }
 
@@ -934,157 +985,28 @@ export default function ChatsPage() {
         return
       }
 
-      const now = new Date().toISOString()
-      // --- PDF send path ---
-      if (pendingPdf) {
-        const pdfPayload = JSON.stringify({
-          url: pendingPdf.url,
-          fileName: pendingPdf.fileName,
-          fileSize: pendingPdf.size,
-          expiresAt: pendingPdf.expiresAt,
-          expiresAtLabel: pendingPdf.expiresAtLabel,
-        })
-        await api.chats.send(sendingChatId, { messageType: 'file', content: pdfPayload })
-        const pdfLabel = `📎 ${pendingPdf.fileName}`
-        setPendingPdf(null)
-        setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
-          ...prev,
-          lastMessageAt: now,
-          status: 'in_progress',
-          messages: [
-            ...(prev.messages ?? []),
-            {
-              id: crypto.randomUUID(),
-              direction: 'outgoing',
-              messageType: 'file',
-              content: pdfPayload,
-              createdAt: now,
-            },
-          ],
-        } : prev)
-        setChats((prev) => {
-          const exists = prev.some((c) => c.id === sendingChatId)
-          if (!exists) return prev
-          const currentFilter = statusFilterRef.current
-          const currentUnansweredOnly = unansweredOnlyRef.current
-          const updated = prev.map((c) => c.id === sendingChatId ? {
-            ...c,
-            lastMessageAt: now,
-            status: 'in_progress' as const,
-            lastMessageContent: pdfLabel,
-            lastMessageDirection: 'outgoing' as const,
-            lastMessageType: 'file' as const,
-          } : c)
-          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
-          if (currentUnansweredOnly) filtered = filtered.filter((c) => c.id !== sendingChatId)
-          return [...filtered].sort((a, b) => {
-            const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
-            const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
-            return bt - at
-          })
-        })
+      const payloads = buildScheduledPayloads({
+        pendingPdf,
+        pendingImages,
+        messageContent,
+      })
+      if (payloads.length === 0) {
+        setError('送信内容を入力してください。')
+        return
       }
-      // --- Image send path (runs first when image is present) ---
-      if (pendingImages.length > 0) {
-        const imagesToSend = pendingImages
-        const imgPayload = JSON.stringify(imagesToSend)
-        await api.chats.send(sendingChatId, { messageType: 'image', content: imgPayload })
-        setPendingImages([])
-        for (const image of imagesToSend) {
-          const singlePayload = JSON.stringify(image)
-          setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
-            ...prev,
-            lastMessageAt: now,
-            status: 'in_progress',
-            messages: [
-              ...(prev.messages ?? []),
-              {
-                id: crypto.randomUUID(),
-                direction: 'outgoing',
-                messageType: 'image',
-                content: singlePayload,
-                createdAt: now,
-              },
-            ],
-          } : prev)
+      for (const payload of payloads) {
+        const res = await api.chats.send(sendingChatId, {
+          messageType: payload.messageType,
+          content: payload.content,
+        })
+        if (!res.success) {
+          setError(res.error ?? 'メッセージの送信予約に失敗しました。')
+          await loadPendingScheduled(sendingChatId)
+          return
         }
-        setChats((prev) => {
-          const exists = prev.some((c) => c.id === sendingChatId)
-          if (!exists) return prev
-          const currentFilter = statusFilterRef.current
-          const currentUnansweredOnly = unansweredOnlyRef.current
-          const imageLabel = imagesToSend.length > 1 ? `[画像 ${imagesToSend.length}枚]` : '[画像]'
-          const updated = prev.map((c) => c.id === sendingChatId ? {
-            ...c,
-            lastMessageAt: now,
-            status: 'in_progress' as const,
-            lastMessageContent: imageLabel,
-            lastMessageDirection: 'outgoing' as const,
-            lastMessageType: 'image' as const,
-          } : c)
-          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
-          if (currentUnansweredOnly) {
-            filtered = filtered.filter((c) => c.id !== sendingChatId)
-          }
-          return [...filtered].sort((a, b) => {
-            const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
-            const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
-            return bt - at
-          })
-        })
       }
-      // --- Text send path (runs independently — both paths execute when both image and text are present) ---
-      if (messageContent.trim()) {
-        const content = messageContent.trim()
-        await api.chats.send(sendingChatId, { content })
-        setMessageContent('')
-        // Optimistic update: append message locally instead of refetching (prevents scroll jump / full reload feel)
-        // Only mutate chatDetail if it still corresponds to the chat we just sent to
-        setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
-          ...prev,
-          lastMessageAt: now,
-          status: 'in_progress',
-          messages: [
-            ...(prev.messages ?? []),
-            {
-              id: crypto.randomUUID(),
-              direction: 'outgoing',
-              messageType: 'text',
-              content,
-              createdAt: now,
-            },
-          ],
-        } : prev)
-        setChats((prev) => {
-          // Skip reconciliation if the list no longer contains this chat (e.g. tab changed mid-send)
-          const exists = prev.some((c) => c.id === sendingChatId)
-          if (!exists) return prev
-          const currentFilter = statusFilterRef.current
-          const currentUnansweredOnly = unansweredOnlyRef.current
-          const updated = prev.map((c) => c.id === sendingChatId ? {
-            ...c,
-            lastMessageAt: now,
-            status: 'in_progress' as const,
-            // 一覧の preview も即時更新する。incoming 優先ロジックで上書きされ得るが、
-            // 楽観 UI では「operator が今送った文面」が一瞬見えるのが期待動作。
-            // 次回 loadChats() で server 側の真の最新 (incoming 優先) に reconcile される。
-            lastMessageContent: content,
-            lastMessageDirection: 'outgoing' as const,
-            lastMessageType: 'text' as const,
-          } : c)
-          // Drop rows that no longer match the current tab (e.g. replying from 未読 moves chat to in_progress)
-          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
-          if (currentUnansweredOnly) {
-            // 未対応モードでは、自分が返信したばかりの chat はもう未対応ではないのでリストから除外
-            filtered = filtered.filter((c) => c.id !== sendingChatId)
-          }
-          return [...filtered].sort((a, b) => {
-            const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
-            const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
-            return bt - at
-          })
-        })
-      }
+      clearComposerDraft()
+      await loadPendingScheduled(sendingChatId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'メッセージの送信に失敗しました。')
     } finally {
@@ -1605,13 +1527,60 @@ export default function ChatsPage() {
 
               {/* 予約送信 */}
               <div className="border-t border-gray-200 shrink-0 px-3 lg:px-4 py-2 bg-white">
-                {pendingScheduled.length > 0 && (
-                  <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                    <div className="text-xs font-medium text-amber-900 mb-1.5">
-                      予約中のメッセージ（{pendingScheduled.length}件）
+                {undoPending.length > 0 && (
+                  <div className="mb-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <div className="text-xs font-medium text-green-900">
+                        {UNDO_SEND_SECONDS}秒後に送信（取り消し可）
+                      </div>
+                      {undoPending.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => void handleCancelAllUndo()}
+                          className="rounded-md border border-green-400 bg-white px-2 py-1 text-[11px] font-medium text-green-900 hover:bg-green-100"
+                        >
+                          すべて取り消し
+                        </button>
+                      )}
                     </div>
                     <ul className="space-y-2">
-                      {pendingScheduled.map((item) => (
+                      {undoPending.map((item) => {
+                        const remain = remainingUndoSeconds(item.scheduledAt, undoNowMs)
+                        return (
+                          <li
+                            key={item.id}
+                            className="flex items-start gap-2 rounded-md border border-green-200 bg-white px-2 py-1.5 text-xs text-green-950"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium tabular-nums text-green-800">
+                                {remain > 0 ? `あと ${remain} 秒` : '送信中...'}
+                              </div>
+                              <div className="truncate text-green-950/90">{scheduledPreviewContent(item)}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleCancelScheduled(item.id, { confirm: false })}
+                              disabled={cancellingScheduledId === item.id || remain <= 0}
+                              className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {cancellingScheduledId === item.id ? '取消中...' : '取り消し'}
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                    <p className="mt-1.5 text-[10px] text-green-800">
+                      この間に取り消せば、お客さんの LINE には届きません。
+                    </p>
+                  </div>
+                )}
+                {laterScheduled.length > 0 && (
+                  <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="text-xs font-medium text-amber-900 mb-1.5">
+                      予約中のメッセージ（{laterScheduled.length}件）
+                    </div>
+                    <ul className="space-y-2">
+                      {laterScheduled.map((item) => (
                         <li
                           key={item.id}
                           className={`flex items-start gap-2 rounded-md border px-2 py-1.5 text-xs text-amber-950 ${
@@ -1681,6 +1650,9 @@ export default function ChatsPage() {
                   >
                     今すぐ
                   </button>
+                  {sendTiming === 'now' && (
+                    <span className="text-[11px] text-gray-500">送信後{UNDO_SEND_SECONDS}秒は取り消し可</span>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
