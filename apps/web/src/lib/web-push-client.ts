@@ -70,10 +70,7 @@ export async function subscribeWebPush(): Promise<WebPushStatus> {
   const vapid = await api.webPush.vapidPublicKey()
   if (!vapid.success || !vapid.data.publicKey) return 'unsupported'
   const keyBytes = urlBase64ToUint8Array(vapid.data.publicKey)
-  const applicationServerKey = keyBytes.buffer.slice(
-    keyBytes.byteOffset,
-    keyBytes.byteOffset + keyBytes.byteLength,
-  )
+  const applicationServerKey = Uint8Array.from(keyBytes)
 
   let subscription = await registration.pushManager.getSubscription()
   if (!subscription) {
