@@ -636,6 +636,8 @@ async function handleEvent(
         const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
         await notifyWebPushUnread(db, {
           friendName: friend.display_name,
+          friendId: friend.id,
+          preview: incomingText,
           subject: workerUrl,
         });
       } catch (err) {
