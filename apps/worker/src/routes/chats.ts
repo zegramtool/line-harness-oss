@@ -517,14 +517,6 @@ chats.put('/api/chats/:id', async (c) => {
     await updateChat(c.env.DB, resolved.id, updates);
     const updated = await getChatById(c.env.DB, resolved.id);
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
-    if (body.status !== undefined) {
-      const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
-      c.executionCtx.waitUntil(
-        notifyWebPushUnread(c.env.DB, {
-          subject: c.env.ADMIN_PUBLIC_URL || c.env.WORKER_URL,
-        }).catch((err) => console.error('web push notify failed', err)),
-      );
-    }
     return c.json({
       success: true,
       // 公開 ID は friend_id に統一

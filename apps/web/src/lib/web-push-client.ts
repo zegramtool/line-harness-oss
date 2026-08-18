@@ -39,12 +39,35 @@ export async function getWebPushStatus(): Promise<WebPushStatus> {
   return 'needs-permission'
 }
 
-export const SERVICE_WORKER_URL = '/sw.js?v=3'
+export const SERVICE_WORKER_URL = '/sw.js'
 
+function scriptUrlOf(reg: ServiceWorkerRegistration): string {
+  return reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || ''
+}
+
+/** Push 購読は最初に登録した SW に紐づく。?v= 付きは別 SW になるので外す。 */
 export async function registerChatServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null
   try {
-    return await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: '/' })
+    const regs = await navigator.serviceWorker.getRegistrations()
+    for (const reg of regs) {
+      if (scriptUrlOf(reg).includes('sw.js?')) {
+        try {
+          const sub = await reg.pushManager.getSubscription()
+          if (sub) await sub.unsubscribe()
+        } catch {
+          // 購読解除に失敗しても unregister は続ける
+        }
+        await reg.unregister()
+      }
+    }
+    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: '/' })
+    try {
+      await registration.update()
+    } catch {
+      // オフライン時など
+    }
+    return registration
   } catch {
     return null
   }
@@ -64,8 +87,8 @@ export async function subscribeWebPush(): Promise<WebPushStatus> {
     return permission === 'denied' ? 'denied' : 'needs-permission'
   }
 
-  const registration = (await navigator.serviceWorker.getRegistration())
-    ?? (await registerChatServiceWorker())
+  const registration = (await registerChatServiceWorker())
+    ?? (await navigator.serviceWorker.getRegistration())
   if (!registration) return 'unsupported'
   await navigator.serviceWorker.ready
 

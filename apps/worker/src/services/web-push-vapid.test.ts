@@ -6,10 +6,15 @@ describe('buildUnreadPushData', () => {
   test('1件なら件数を本文に出さない', () => {
     expect(buildUnreadPushData({ unreadCount: 1, friendName: '山田' })).toEqual({
       unreadCount: 1,
+      badgeCount: 1,
       title: '未読のチャット',
       body: '山田からメッセージ',
       url: '/chats/',
     });
+  });
+
+  test('未読ゼロでも incoming 用 badgeCount は 1', () => {
+    expect(buildUnreadPushData({ unreadCount: 0, friendName: '山田' }).badgeCount).toBe(1);
   });
 
   test('2件以上なら件数を添える', () => {
