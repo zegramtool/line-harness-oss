@@ -11,7 +11,7 @@ import {
   saveWebPushVapid,
 } from '@line-crm/db';
 import { generateVapidKeys } from './web-push-vapid.js';
-import { buildUnreadPushData } from './web-push-message.js';
+import { buildDeclarativeUnreadPush, buildUnreadPushData } from './web-push-message.js';
 
 const DEFAULT_SUBJECT = 'https://tacteq-line-admin-88e31c57.pages.dev';
 
@@ -43,7 +43,7 @@ export async function getOrCreateVapidKeys(
 export async function sendWebPush(
   subscription: PushSubscription,
   vapid: VapidKeys,
-  data: ReturnType<typeof buildUnreadPushData>,
+  data: ReturnType<typeof buildDeclarativeUnreadPush>,
 ): Promise<Response> {
   const payload = await buildPushPayload(
     { data, options: { ttl: 3600, urgency: 'high', topic: 'unread-chats' } },
@@ -55,14 +55,15 @@ export async function sendWebPush(
 
 export async function notifyWebPushUnread(
   db: D1Database,
-  opts: { friendName?: string | null; subject?: string } = {},
+  opts: { friendName?: string | null; subject?: string; adminPublicUrl?: string } = {},
 ): Promise<{ sent: number; gone: number }> {
   const subscriptions = await listWebPushSubscriptions(db);
   if (subscriptions.length === 0) return { sent: 0, gone: 0 };
 
   const vapid = await getOrCreateVapidKeys(db, opts.subject);
   const unreadCount = await getUnreadFriendCount(db);
-  const data = buildUnreadPushData({ unreadCount, friendName: opts.friendName });
+  const unread = buildUnreadPushData({ unreadCount, friendName: opts.friendName });
+  const data = buildDeclarativeUnreadPush(unread, opts.adminPublicUrl || DEFAULT_SUBJECT);
 
   let sent = 0;
   let gone = 0;

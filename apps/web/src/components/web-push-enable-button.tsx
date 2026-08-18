@@ -29,7 +29,7 @@ export default function WebPushEnableButton() {
   if (status === 'subscribed') {
     return (
       <p className="px-3 py-2 text-[11px] leading-snug text-gray-400">
-        通知オン。数字がホーム画面に付かないときは、iPhone の 設定 → 通知 → チャット →
+        通知オン。ホームの数字は iOS 18.4 以降。付かないときは 設定 → 通知 → チャット →
         <span className="font-medium text-gray-600"> バッジ </span>
         をオンにする
       </p>

@@ -31,6 +31,7 @@ describe('display mode helpers', () => {
     expect(sw).toContain('setAppBadge')
     expect(sw).toContain('self.navigator')
     expect(sw).toContain('badgeCount')
+    expect(sw).toContain('web_push')
     expect(sw).toContain('Math.max(1')
     expect(sw).not.toContain('clearAppBadge')
     expect(SERVICE_WORKER_URL.includes('?')).toBe(false)

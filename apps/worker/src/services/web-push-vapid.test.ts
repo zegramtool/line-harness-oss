@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildUnreadPushData } from './web-push-message.js';
+import { buildDeclarativeUnreadPush, buildUnreadPushData } from './web-push-message.js';
 import { generateVapidKeys, vapidPublicKeyBytes } from './web-push-vapid.js';
 
 describe('buildUnreadPushData', () => {
@@ -27,6 +27,22 @@ describe('buildUnreadPushData', () => {
     expect(buildUnreadPushData({ unreadCount: 1, friendName: '  ' }).body).toBe(
       'お客さまからメッセージ',
     );
+  });
+});
+
+describe('buildDeclarativeUnreadPush', () => {
+  test('iOS が SW なしでバッジを付ける JSON になる', () => {
+    const unread = buildUnreadPushData({ unreadCount: 0, friendName: '山田' });
+    const payload = buildDeclarativeUnreadPush(unread, 'https://tacteq-line-admin-88e31c57.pages.dev/');
+    expect(payload.web_push).toBe(8030);
+    expect(payload.mutable).toBe(false);
+    expect(payload.app_badge).toBe(1);
+    expect(payload.notification.app_badge).toBe('1');
+    expect(payload.notification.navigate).toBe(
+      'https://tacteq-line-admin-88e31c57.pages.dev/chats/',
+    );
+    expect(payload.notification.title).toBe('未読のチャット');
+    expect(payload.notification.body).toBe('山田からメッセージ');
   });
 });
 

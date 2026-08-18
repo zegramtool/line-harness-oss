@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import { buildPushPayload } from '@block65/webcrypto-web-push';
 import { notifyWebPushUnread } from './web-push-notify.js';
 
 const vapidRow = {
@@ -89,6 +90,12 @@ describe('notifyWebPushUnread', () => {
     const result = await notifyWebPushUnread({} as D1Database);
     expect(result.sent).toBe(1);
     expect(result.gone).toBe(0);
+    const message = vi.mocked(buildPushPayload).mock.calls.at(-1)?.[0] as {
+      data?: { web_push?: number; mutable?: boolean; notification?: { app_badge?: string } };
+    };
+    expect(message.data?.web_push).toBe(8030);
+    expect(message.data?.mutable).toBe(false);
+    expect(Number(message.data?.notification?.app_badge)).toBeGreaterThanOrEqual(1);
     vi.unstubAllGlobals();
   });
 });

@@ -1,4 +1,4 @@
-/* v4: 購読は必ず /sw.js。iOS バッジは navigator.setAppBadge。届いた通知では最低 1 */
+/* v5: Declarative Web Push の app_badge。古い iOS は navigator.setAppBadge */
 self.addEventListener('install', () => {
   self.skipWaiting()
 })
@@ -30,6 +30,18 @@ function readPushData(event) {
       }
     }
     if (!parsed || typeof parsed !== 'object') return fallback
+    const note = parsed.notification
+    if (parsed.web_push === 8030 && note && typeof note === 'object') {
+      const badgeRaw = note.app_badge ?? parsed.app_badge ?? note.data?.badgeCount
+      const badgeCount = Math.max(1, Math.floor(Number(badgeRaw) || 1))
+      return {
+        unreadCount: Number(note.data?.unreadCount) || badgeCount,
+        badgeCount,
+        title: note.title || fallback.title,
+        body: note.body || fallback.body,
+        url: (note.data && note.data.url) || fallback.url,
+      }
+    }
     return { ...fallback, ...parsed }
   } catch {
     return fallback
