@@ -2,6 +2,7 @@
 
 export const BEARER_STORAGE_KEY = 'lh_bearer_token'
 export const CSRF_STORAGE_KEY = 'lh_csrf'
+export const REMEMBER_DEVICE_KEY = 'lh_remember_device'
 
 export type SessionMode = 'cookie' | 'bearer'
 
@@ -24,23 +25,60 @@ function staffFromPayload(payload: SessionPayload): StaffSession | null {
   return payload.data
 }
 
-export function getBearerToken(): string {
-  if (typeof window === 'undefined') return ''
+function readStorageItem(storage: 'session' | 'local', key: string): string {
   try {
-    return sessionStorage.getItem(BEARER_STORAGE_KEY) || ''
+    const store = storage === 'session' ? sessionStorage : localStorage
+    return store.getItem(key) || ''
   } catch {
     return ''
   }
 }
 
-export function setBearerToken(token: string): void {
-  if (typeof window === 'undefined') return
-  sessionStorage.setItem(BEARER_STORAGE_KEY, token)
+function writeStorageItem(storage: 'session' | 'local', key: string, value: string): void {
+  try {
+    const store = storage === 'session' ? sessionStorage : localStorage
+    store.setItem(key, value)
+  } catch {
+    // Safari private mode 等
+  }
+}
+
+function removeStorageItem(storage: 'session' | 'local', key: string): void {
+  try {
+    const store = storage === 'session' ? sessionStorage : localStorage
+    store.removeItem(key)
+  } catch {
+    // ignore
+  }
+}
+
+/** 未設定なら true（iPhone で毎回ログインし直すのを避ける） */
+export function getRememberDevicePreference(): boolean {
+  const raw = readStorageItem('local', REMEMBER_DEVICE_KEY)
+  if (raw === '0') return false
+  return true
+}
+
+export function setRememberDevicePreference(remember: boolean): void {
+  writeStorageItem('local', REMEMBER_DEVICE_KEY, remember ? '1' : '0')
+}
+
+export function getBearerToken(): string {
+  return readStorageItem('session', BEARER_STORAGE_KEY) || readStorageItem('local', BEARER_STORAGE_KEY)
+}
+
+export function setBearerToken(token: string, persist = true): void {
+  writeStorageItem('session', BEARER_STORAGE_KEY, token)
+  if (persist) {
+    writeStorageItem('local', BEARER_STORAGE_KEY, token)
+  } else {
+    removeStorageItem('local', BEARER_STORAGE_KEY)
+  }
 }
 
 export function clearBearerToken(): void {
-  if (typeof window === 'undefined') return
-  sessionStorage.removeItem(BEARER_STORAGE_KEY)
+  removeStorageItem('session', BEARER_STORAGE_KEY)
+  removeStorageItem('local', BEARER_STORAGE_KEY)
 }
 
 export function cacheStaffSession(payload: SessionPayload): SessionMode | null {
@@ -108,6 +146,7 @@ export async function establishSessionAfterLogin(
   apiUrl: string,
   _apiKey: string,
   loginPayload: SessionPayload,
+  options?: { persistBearer?: boolean },
 ): Promise<SessionMode> {
   cacheStaffSession(loginPayload)
 
@@ -122,7 +161,9 @@ export async function establishSessionAfterLogin(
     throw new Error('ログインに失敗しました（モバイル認証）')
   }
 
-  setBearerToken(sessionToken)
+  const persistBearer = options?.persistBearer ?? true
+  setRememberDevicePreference(persistBearer)
+  setBearerToken(sessionToken, persistBearer)
   const bearerPayload = await fetchSession(apiUrl, { bearer: sessionToken })
   const bearerStaff = staffFromPayload(bearerPayload ?? {})
   if (!bearerStaff) {
