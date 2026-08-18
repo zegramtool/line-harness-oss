@@ -14,6 +14,7 @@ vi.mock('@line-crm/db', () => ({
   completeFriendScenario: vi.fn(),
   upsertChatOnMessage: vi.fn(),
   getLineAccounts: vi.fn().mockResolvedValue([]),
+  getLineAccountById: vi.fn(),
   jstNow: vi.fn(),
   computeNextDeliveryAt: vi.fn(),
   resolveStepContent: vi.fn(),
