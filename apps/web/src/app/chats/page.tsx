@@ -1206,9 +1206,14 @@ export default function ChatsPage() {
                 onChange={(e) => setUnansweredOnly(e.target.checked)}
                 className="rounded"
               />
-              🔥 未対応のみ
+              返信待ち
             </label>
           </div>
+          {unansweredOnly && (
+            <p className="px-3 py-1.5 text-[11px] text-gray-500 border-b border-gray-100">
+              公式LINEにまだ返信していない人です。未読・対応中・解決済とは別の絞り込みで、新しい順です。
+            </p>
+          )}
 
           {/* Chat List */}
           <div className="flex-1 overflow-y-auto">
@@ -1393,9 +1398,9 @@ export default function ChatsPage() {
                         }
                       }}
                       className="rounded-md bg-emerald-600 px-3 py-1.5 min-h-[44px] lg:min-h-0 text-sm font-medium text-white hover:bg-emerald-700"
-                      title="次の未対応 friend に進む"
+                      title="次の返信待ちの人に進む"
                     >
-                      次の未対応 →
+                      次の返信待ち →
                     </button>
                   )}
                   {chatDetail.status !== 'unread' && (

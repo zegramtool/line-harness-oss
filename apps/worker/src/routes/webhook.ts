@@ -140,6 +140,26 @@ webhook.post('/webhook', async (c) => {
   return c.json({ status: 'ok' }, 200);
 });
 
+async function markIncomingNeedsReply(
+  db: D1Database,
+  friend: { id: string; display_name?: string | null },
+  preview: string,
+  workerUrl?: string,
+): Promise<void> {
+  await upsertChatOnMessage(db, friend.id);
+  try {
+    const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
+    await notifyWebPushUnread(db, {
+      friendName: friend.display_name,
+      friendId: friend.id,
+      preview,
+      subject: workerUrl,
+    });
+  } catch (err) {
+    console.error('web push notify failed', err);
+  }
+}
+
 async function handleEvent(
   db: D1Database,
   lineClient: LineClient,
@@ -483,6 +503,20 @@ async function handleEvent(
       )
       .bind(crypto.randomUUID(), friend.id, msg.type, finalContent, jstNow())
       .run();
+    const previewByType: Record<string, string> = {
+      image: '📷 画像',
+      sticker: '🎨 スタンプ',
+      audio: '🎤 音声',
+      video: '🎥 動画',
+      file: '📎 ファイル',
+      location: '📍 位置情報',
+    };
+    await markIncomingNeedsReply(
+      db,
+      friend,
+      previewByType[msg.type] || content,
+      workerUrl,
+    );
     return;
   }
 
@@ -631,18 +665,7 @@ async function handleEvent(
 
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
     if (!matched) {
-      await upsertChatOnMessage(db, friend.id);
-      try {
-        const { notifyWebPushUnread } = await import('../services/web-push-notify.js');
-        await notifyWebPushUnread(db, {
-          friendName: friend.display_name,
-          friendId: friend.id,
-          preview: incomingText,
-          subject: workerUrl,
-        });
-      } catch (err) {
-        console.error('web push notify failed', err);
-      }
+      await markIncomingNeedsReply(db, friend, incomingText, workerUrl);
     }
 
     // イベントバス発火: message_received
