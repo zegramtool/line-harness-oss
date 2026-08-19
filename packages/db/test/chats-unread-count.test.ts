@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { countUnreadFriends, statusAfterIncomingCustomerMessage } from '../src/chats.js';
+import { countUnreadFriends, inferChatStatus, statusAfterIncomingCustomerMessage } from '../src/chats.js';
 
 describe('countUnreadFriends', () => {
   test('友だち単位で unread だけを数える', () => {
@@ -39,5 +39,24 @@ describe('statusAfterIncomingCustomerMessage', () => {
     expect(statusAfterIncomingCustomerMessage('in_progress')).toBe('unread');
     expect(statusAfterIncomingCustomerMessage('resolved')).toBe('unread');
     expect(statusAfterIncomingCustomerMessage('unread')).toBe('unread');
+  });
+});
+
+describe('inferChatStatus', () => {
+  test('保存済み status を優先する', () => {
+    expect(inferChatStatus({ storedStatus: 'resolved', lastMessageDirection: 'incoming' })).toBe(
+      'resolved',
+    );
+    expect(inferChatStatus({ storedStatus: 'in_progress', lastMessageDirection: 'incoming' })).toBe(
+      'in_progress',
+    );
+  });
+
+  test('chats 行が無く最後が incoming なら未読', () => {
+    expect(inferChatStatus({ storedStatus: null, lastMessageDirection: 'incoming' })).toBe('unread');
+  });
+
+  test('chats 行が無く最後が outgoing なら解決済', () => {
+    expect(inferChatStatus({ lastMessageDirection: 'outgoing' })).toBe('resolved');
   });
 });

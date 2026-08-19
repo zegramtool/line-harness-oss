@@ -13,6 +13,7 @@ import {
   updateChat,
   consolidateChatsForFriend,
   getUnreadFriendCount,
+  inferChatStatus,
   jstNow,
   createScheduledMessage,
   parseScheduledAtMs,
@@ -68,8 +69,8 @@ type ChatLike = {
 
 // id は chats.id もしくは friend.id のどちらか。friend.id のときは chats 行を遅延作成する。
 // push / broadcast / scenario 配信だけを受けた友だちもチャット画面に現れるため、ここで lazy create が必要。
-// 新規作成する場合は status='resolved' にし、last_message_at は messages_log の実際の最終時刻を使う
-// （jstNow を入れると一覧並び順が壊れるため）。
+// 新規作成する場合は、最後が incoming なら unread、そうでなければ resolved。
+// last_message_at は messages_log の実際の最終時刻を使う（jstNow を入れると一覧並び順が壊れるため）。
 async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike | null> {
   const existing = await getChatById(db, id);
   if (existing) {
@@ -83,21 +84,28 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
 
   const lastMsg = await db
     .prepare(
-      `SELECT MAX(created_at) AS last FROM messages_log WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')`,
+      `SELECT created_at AS last, direction
+       FROM messages_log
+       WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
+       ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(friend.id)
-    .first<{ last: string | null }>();
+    .first<{ last: string | null; direction: string | null }>();
   const newId = crypto.randomUUID();
   const now = jstNow();
   const lastMessageAt = lastMsg?.last ?? null;
+  const seedStatus = inferChatStatus({
+    storedStatus: null,
+    lastMessageDirection: lastMsg?.direction,
+  });
   // 同時実行で二重挿入されないように WHERE NOT EXISTS で原子挿入。挿入結果に関わらず最古行を返して収束。
   await db
     .prepare(
       `INSERT INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
-       SELECT ?, ?, 'resolved', ?, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM chats WHERE friend_id = ?)`,
     )
-    .bind(newId, friend.id, lastMessageAt, now, now, friend.id)
+    .bind(newId, friend.id, seedStatus, lastMessageAt, now, now, friend.id)
     .run();
   return (await consolidateChatsForFriend(db, friend.id))! as ChatLike;
 }
@@ -276,7 +284,8 @@ chats.get('/api/chats', async (c) => {
           COALESCE(ri.content, ra.content) AS content,
           COALESCE(ri.direction, ra.direction) AS direction,
           COALESCE(ri.message_type, ra.message_type) AS message_type,
-          COALESCE(ri.created_at, ra.created_at) AS preview_at
+          COALESCE(ri.created_at, ra.created_at) AS preview_at,
+          ra.direction AS last_any_direction
         FROM (SELECT * FROM ranked_any WHERE rn = 1) ra
         LEFT JOIN (SELECT * FROM ranked_in WHERE rn = 1) ri ON ra.friend_id = ri.friend_id
       ),
@@ -315,16 +324,16 @@ chats.get('/api/chats', async (c) => {
         f.line_user_id,
         f.line_account_id,
         co.operator_id,
-        CASE COALESCE(cm.status_rank, 1)
-          WHEN 3 THEN 'in_progress'
-          WHEN 2 THEN 'unread'
+        CASE
+          WHEN cm.status_rank = 3 THEN 'in_progress'
+          WHEN cm.status_rank = 2 THEN 'unread'
+          WHEN cm.status_rank = 1 THEN 'resolved'
+          WHEN rm.last_any_direction = 'incoming' THEN 'unread'
           ELSE 'resolved'
         END AS status,
         cn.notes,
-        -- last_message_at は preview メッセージの時刻に揃える (一覧 row の時刻表示と preview が
-        -- 別メッセージを指す mismatch を防ぐ)。preview が無い (chats 行のみ存在) ケースは
-        -- d.last_message_at にフォールバック。
-        COALESCE(rm.preview_at, d.last_message_at) AS last_message_at,
+        -- 並びと時刻は最新アクティビティ。preview 本文だけ incoming 優先。
+        d.last_message_at AS last_message_at,
         rm.content AS last_message_content,
         rm.direction AS last_message_direction,
         rm.message_type AS last_message_type,
@@ -345,9 +354,11 @@ chats.get('/api/chats', async (c) => {
     const bindings: unknown[] = [];
 
     if (status) {
-      conditions.push(`CASE COALESCE(cm.status_rank, 1)
-        WHEN 3 THEN 'in_progress'
-        WHEN 2 THEN 'unread'
+      conditions.push(`CASE
+        WHEN cm.status_rank = 3 THEN 'in_progress'
+        WHEN cm.status_rank = 2 THEN 'unread'
+        WHEN cm.status_rank = 1 THEN 'resolved'
+        WHEN rm.last_any_direction = 'incoming' THEN 'unread'
         ELSE 'resolved'
       END = ?`);
       bindings.push(status);
@@ -391,6 +402,7 @@ chats.get('/api/chats', async (c) => {
 
     if (unansweredIds) {
       data = data.filter((row) => unansweredIds!.has(row.id));
+      data.sort((a, b) => String(b.lastMessageAt ?? '').localeCompare(String(a.lastMessageAt ?? '')));
     }
 
     return c.json({ success: true, data });
@@ -434,7 +446,6 @@ chats.get('/api/chats/:id', async (c) => {
     // 公開 ID は常に friend_id に統一する（lazy-create で ID が変わるのを防ぐため）。
     const responseId = resolvedFriendId;
     const operatorId = chatRow?.operator_id ?? null;
-    const status = chatRow?.status ?? 'resolved';
     const notes = chatRow?.notes ?? null;
     const lastMessageAt = chatRow?.last_message_at ?? null;
     const createdAt = chatRow?.created_at ?? null;
@@ -458,6 +469,13 @@ chats.get('/api/chats/:id', async (c) => {
       .bind(resolvedFriendId)
       .all();
     messages.results = (messages.results as Record<string, unknown>[]).reverse();
+    const newest = messages.results[messages.results.length - 1] as
+      | { direction?: string }
+      | undefined;
+    const status = inferChatStatus({
+      storedStatus: chatRow?.status,
+      lastMessageDirection: newest?.direction ?? null,
+    });
 
     return c.json({
       success: true,

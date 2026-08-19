@@ -242,6 +242,21 @@ export function statusAfterIncomingCustomerMessage(_current?: string | null): 'u
   return 'unread';
 }
 
+/** chats 行が無いとき、最後のメッセージ方向から一覧の status を決める。無いと解決済に見えてしまう。 */
+export function inferChatStatus(opts: {
+  storedStatus?: string | null;
+  lastMessageDirection?: string | null;
+}): 'unread' | 'in_progress' | 'resolved' {
+  if (
+    opts.storedStatus === 'unread'
+    || opts.storedStatus === 'in_progress'
+    || opts.storedStatus === 'resolved'
+  ) {
+    return opts.storedStatus;
+  }
+  return opts.lastMessageDirection === 'incoming' ? 'unread' : 'resolved';
+}
+
 /** 友だちからメッセージ受信時にチャットを作成/更新 */
 export async function upsertChatOnMessage(db: D1Database, friendId: string): Promise<ChatRow> {
   const existing = await getChatByFriendId(db, friendId);
