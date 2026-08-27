@@ -23,6 +23,8 @@ import {
   ChatImageThumbs,
   collectChatImageUrls,
 } from '@/components/chats/chat-image-viewer'
+import { ChatPdfBubble } from '@/components/chats/chat-pdf-bubble'
+import { chatFilePreviewLabel } from '@/lib/chat-file-content'
 
 interface Chat {
   id: string
@@ -72,27 +74,6 @@ function formatPdfSize(bytes: number): string {
 function isPdfFile(file: File): boolean {
   if (file.type === 'application/pdf') return true
   return file.name.toLowerCase().endsWith('.pdf')
-}
-
-function PdfMessageBubble({ content, outgoing }: { content: string; outgoing?: boolean }) {
-  try {
-    const parsed = JSON.parse(content) as { url?: string; fileName?: string }
-    const label = parsed.fileName ?? 'PDF'
-    const href = parsed.url
-    if (!href) return <span>📎 {label}</span>
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={outgoing ? 'underline text-white' : 'text-green-700 underline'}
-      >
-        📎 {label}
-      </a>
-    )
-  } catch {
-    return <span>📎 PDF</span>
-  }
 }
 
 type StatusFilter = 'all' | 'unread' | 'in_progress' | 'resolved'
@@ -148,12 +129,7 @@ function formatScheduledAtLabel(iso: string): string {
 
 function scheduledPreviewContent(msg: ScheduledChatMessage): string {
   if (msg.messageType === 'text') return msg.messageContent
-  if (msg.messageType === 'file') {
-    try {
-      const p = JSON.parse(msg.messageContent) as { fileName?: string }
-      return `📎 ${p.fileName ?? 'PDF'}`
-    } catch { return '📎 PDF' }
-  }
+  if (msg.messageType === 'file') return chatFilePreviewLabel(msg.messageContent)
   if (msg.messageType === 'image') {
     try {
       const p = JSON.parse(msg.messageContent) as unknown
@@ -1249,7 +1225,7 @@ export default function ChatsPage() {
                     if (chat.lastMessageType === 'sticker') return '🎨 スタンプ'
                     if (chat.lastMessageType === 'video') return '🎥 動画'
                     if (chat.lastMessageType === 'audio') return '🎤 音声'
-                    if (chat.lastMessageType === 'file') return '📎 ファイル'
+                    if (chat.lastMessageType === 'file') return chatFilePreviewLabel(previewRaw)
                     if (chat.lastMessageType === 'location') return '📍 位置情報'
                     return previewRaw.replace(/\n+/g, ' ').slice(0, 60)
                   })()
@@ -1476,7 +1452,7 @@ export default function ChatsPage() {
                     } else if (msg.messageType === 'sticker') {
                       bubbleContent = <StickerMessageImage content={msg.content} />
                     } else if (msg.messageType === 'file') {
-                      bubbleContent = <PdfMessageBubble content={msg.content} outgoing={isOutgoing} />
+                      bubbleContent = <ChatPdfBubble content={msg.content} />
                     } else {
                       bubbleContent = <span>{msg.content}</span>
                     }
@@ -1503,7 +1479,7 @@ export default function ChatsPage() {
                           )}
 
                           <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {msg.messageType === 'image' ? (
+                            {msg.messageType === 'image' || msg.messageType === 'file' ? (
                               bubbleContent
                             ) : (
                               <div

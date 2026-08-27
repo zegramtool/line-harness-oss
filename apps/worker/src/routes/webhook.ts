@@ -454,6 +454,7 @@ async function handleEvent(
       id: string;
       type: string;
       fileName?: string;
+      fileSize?: number;
       title?: string;
       packageId?: string | number;
       package_id?: string | number;
@@ -472,7 +473,7 @@ async function handleEvent(
     };
     const content = labels[msg.type] ?? `[${msg.type}]`;
 
-    // image の場合は LINE Content API でバイナリを取得 → R2 → JSON URL に置換。
+    // image / file は LINE Content API でバイナリを取得 → R2 → JSON URL に置換。
     // 失敗時は labels[msg.type] のラベル文字列のまま (フォールバック)。
     let finalContent = content;
     if (msg.type === 'sticker') {
@@ -495,6 +496,22 @@ async function handleEvent(
         finalContent = JSON.stringify(refs);
       }
     }
+    // file（PDF など）も Content API → R2。失敗時は [ファイル: 名前] のまま。
+    if (msg.type === 'file' && r2 && workerUrl) {
+      const { fetchAndStoreIncomingFile } = await import('../services/incoming-file.js');
+      const refs = await fetchAndStoreIncomingFile({
+        r2,
+        workerUrl,
+        channelAccessToken: lineAccessToken,
+        accountId: lineAccountId ?? 'unknown',
+        messageId: msg.id,
+        fileName: msg.fileName,
+        fileSize: typeof msg.fileSize === 'number' ? msg.fileSize : undefined,
+      });
+      if (refs) {
+        finalContent = JSON.stringify(refs);
+      }
+    }
 
     await db
       .prepare(
@@ -508,7 +525,7 @@ async function handleEvent(
       sticker: '🎨 スタンプ',
       audio: '🎤 音声',
       video: '🎥 動画',
-      file: '📎 ファイル',
+      file: msg.fileName ? `📎 ${msg.fileName}` : '📎 ファイル',
       location: '📍 位置情報',
     };
     await markIncomingNeedsReply(
