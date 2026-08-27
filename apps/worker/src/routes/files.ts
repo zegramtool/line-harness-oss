@@ -127,6 +127,7 @@ files.get('/files/*', async (c) => {
   headers.set('Content-Type', object.httpMetadata?.contentType || PDF_MIME);
   headers.set('Cache-Control', 'private, max-age=3600');
   headers.set('ETag', object.etag);
+  headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Content-Disposition', buildContentDispositionHeader(originalName, disposition));
 
   return new Response(object.body, { headers });
