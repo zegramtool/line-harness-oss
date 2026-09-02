@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { chatFilePreviewLabel } from '@/lib/chat-file-content'
+import { locationPreviewLabel } from '@line-crm/shared'
 
 export interface InboxRowData {
   friendId: string
@@ -20,11 +21,11 @@ const TYPE_LABELS: Record<string, string> = {
   sticker: 'スタンプ',
   video: '🎥 動画',
   audio: '🎤 音声',
-  location: '📍 位置情報',
 }
 
 function formatPreview(type: string, content: string): string {
   if (type === 'file') return chatFilePreviewLabel(content)
+  if (type === 'location') return locationPreviewLabel(content)
   if (type !== 'text') return TYPE_LABELS[type] ?? `(${type})`
   return content.length > 80 ? `${content.slice(0, 80)}…` : content
 }
