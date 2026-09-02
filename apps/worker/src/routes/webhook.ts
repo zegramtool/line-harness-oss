@@ -455,6 +455,7 @@ async function handleEvent(
       type: string;
       fileName?: string;
       fileSize?: number;
+      duration?: number;
       title?: string;
       address?: string;
       latitude?: number;
@@ -476,7 +477,7 @@ async function handleEvent(
     };
     const content = labels[msg.type] ?? `[${msg.type}]`;
 
-    // image / file は LINE Content API でバイナリを取得 → R2 → JSON URL に置換。
+    // image / file / video は LINE Content API でバイナリを取得 → R2 → JSON URL に置換。
     // 失敗時は labels[msg.type] のラベル文字列のまま (フォールバック)。
     let finalContent = content;
     if (msg.type === 'sticker') {
@@ -500,6 +501,20 @@ async function handleEvent(
         channelAccessToken: lineAccessToken,
         accountId: lineAccountId ?? 'unknown',
         messageId: lineMessageId,
+      });
+      if (refs) {
+        finalContent = JSON.stringify(refs);
+      }
+    }
+    if (msg.type === 'video' && r2 && workerUrl) {
+      const { fetchAndStoreIncomingVideo } = await import('../services/incoming-video.js');
+      const refs = await fetchAndStoreIncomingVideo({
+        r2,
+        workerUrl,
+        channelAccessToken: lineAccessToken,
+        accountId: lineAccountId ?? 'unknown',
+        messageId: msg.id,
+        durationMs: typeof msg.duration === 'number' ? msg.duration : undefined,
       });
       if (refs) {
         finalContent = JSON.stringify(refs);

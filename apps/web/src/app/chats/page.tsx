@@ -26,6 +26,7 @@ import {
 import { ChatPdfBubble } from '@/components/chats/chat-pdf-bubble'
 import { ChatLinkedText } from '@/components/chats/chat-linked-text'
 import { ChatLocationBubble } from '@/components/chats/chat-location-bubble'
+import { ChatVideoBubble } from '@/components/chats/chat-video-bubble'
 import { chatFilePreviewLabel } from '@/lib/chat-file-content'
 import { locationPreviewLabel } from '@line-crm/shared'
 
@@ -1458,6 +1459,8 @@ export default function ChatsPage() {
                       bubbleContent = <ChatPdfBubble content={msg.content} />
                     } else if (msg.messageType === 'location') {
                       bubbleContent = <ChatLocationBubble content={msg.content} />
+                    } else if (msg.messageType === 'video') {
+                      bubbleContent = <ChatVideoBubble content={msg.content} />
                     } else {
                       bubbleContent = <ChatLinkedText text={msg.content} outgoing={isOutgoing} />
                     }
@@ -1484,7 +1487,7 @@ export default function ChatsPage() {
                           )}
 
                           <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {msg.messageType === 'image' || msg.messageType === 'file' || msg.messageType === 'location' ? (
+                            {msg.messageType === 'image' || msg.messageType === 'file' || msg.messageType === 'location' || msg.messageType === 'video' ? (
                               bubbleContent
                             ) : (
                               <div

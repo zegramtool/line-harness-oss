@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { ALLOWED_IMAGE_TYPES, resolveUploadedImageMimeType } from '../utils/image-mime.js';
+import { parseHttpBytesRange } from '../utils/http-range.js';
 
 const images = new Hono<Env>();
 
@@ -89,23 +90,40 @@ images.post('/api/images', async (c) => {
   }
 });
 
-// GET /images/:key — serve image (public, no auth)
+// GET /images/:key — serve image / incoming video (public, no auth)
 images.get('/images/:key', async (c) => {
   const key = c.req.param('key');
-  const object = await c.env.IMAGES.get(key);
+  const forceDownload = c.req.query('download') === '1';
+  const head = await c.env.IMAGES.head(key);
+  if (!head) {
+    return c.json({ success: false, error: 'Image not found' }, 404);
+  }
+
+  const range = forceDownload ? null : parseHttpBytesRange(c.req.header('Range'), head.size);
+  const object = range
+    ? await c.env.IMAGES.get(key, { range })
+    : await c.env.IMAGES.get(key);
 
   if (!object) {
     return c.json({ success: false, error: 'Image not found' }, 404);
   }
 
   const headers = new Headers();
-  headers.set('Content-Type', object.httpMetadata?.contentType || 'image/png');
+  headers.set('Content-Type', object.httpMetadata?.contentType || head.httpMetadata?.contentType || 'image/png');
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   headers.set('ETag', object.etag);
   headers.set('Access-Control-Allow-Origin', '*');
-  if (c.req.query('download') === '1') {
-    const safeName = key.replace(/[^\w.\-]+/g, '_') || 'image';
+  headers.set('Accept-Ranges', 'bytes');
+  if (forceDownload) {
+    const safeName = key.replace(/[^\w.\-]+/g, '_') || 'file';
     headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
+  }
+  if (range) {
+    const start = range.offset;
+    const end = range.offset + range.length - 1;
+    headers.set('Content-Range', `bytes ${start}-${end}/${head.size}`);
+    headers.set('Content-Length', String(range.length));
+    return new Response(object.body, { status: 206, headers });
   }
 
   return new Response(object.body, { headers });
