@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
 import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
-import { createStickerMessageContent } from '@line-crm/shared';
+import { createStickerMessageContent, createLocationMessageContent } from '@line-crm/shared';
 import {
   upsertFriend,
   updateFriendFollowStatus,
@@ -456,6 +456,9 @@ async function handleEvent(
       fileName?: string;
       fileSize?: number;
       title?: string;
+      address?: string;
+      latitude?: number;
+      longitude?: number;
       packageId?: string | number;
       package_id?: string | number;
       stickerId?: string | number;
@@ -480,6 +483,12 @@ async function handleEvent(
       const stickerContent = createStickerMessageContent(msg);
       if (stickerContent) {
         finalContent = JSON.stringify(stickerContent);
+      }
+    }
+    if (msg.type === 'location') {
+      const locationContent = createLocationMessageContent(msg);
+      if (locationContent) {
+        finalContent = JSON.stringify(locationContent);
       }
     }
     if (msg.type === 'image' && r2 && workerUrl) {
