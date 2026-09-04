@@ -90,42 +90,54 @@ images.post('/api/images', async (c) => {
   }
 });
 
+function isVideoObject(key: string, contentType: string): boolean {
+  return contentType.startsWith('video/') || key.toLowerCase().endsWith('.mp4');
+}
+
 // GET /images/:key — serve image / incoming video (public, no auth)
+// 画像は常に 200 で全文返す。Range/206 は LINE の複数枚 push 検証を壊す。
+// 動画再生（iOS）だけ Range を付ける。
 images.get('/images/:key', async (c) => {
   const key = c.req.param('key');
   const forceDownload = c.req.query('download') === '1';
-  const head = await c.env.IMAGES.head(key);
-  if (!head) {
-    return c.json({ success: false, error: 'Image not found' }, 404);
-  }
-
-  const range = forceDownload ? null : parseHttpBytesRange(c.req.header('Range'), head.size);
-  const object = range
-    ? await c.env.IMAGES.get(key, { range })
-    : await c.env.IMAGES.get(key);
-
+  const object = await c.env.IMAGES.get(key);
   if (!object) {
     return c.json({ success: false, error: 'Image not found' }, 404);
   }
 
+  const contentType = object.httpMetadata?.contentType || 'image/png';
+  const size = Number(object.size ?? 0);
   const headers = new Headers();
-  headers.set('Content-Type', object.httpMetadata?.contentType || head.httpMetadata?.contentType || 'image/png');
+  headers.set('Content-Type', contentType);
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   headers.set('ETag', object.etag);
   headers.set('Access-Control-Allow-Origin', '*');
-  headers.set('Accept-Ranges', 'bytes');
   if (forceDownload) {
     const safeName = key.replace(/[^\w.\-]+/g, '_') || 'file';
     headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
   }
-  if (range) {
-    const start = range.offset;
-    const end = range.offset + range.length - 1;
-    headers.set('Content-Range', `bytes ${start}-${end}/${head.size}`);
-    headers.set('Content-Length', String(range.length));
-    return new Response(object.body, { status: 206, headers });
+
+  const allowRange = !forceDownload && isVideoObject(key, contentType);
+  if (allowRange && size > 0) {
+    const range = parseHttpBytesRange(c.req.header('Range'), size);
+    if (range) {
+      const ranged = await c.env.IMAGES.get(key, { range });
+      if (!ranged) {
+        return c.json({ success: false, error: 'Image not found' }, 404);
+      }
+      const start = range.offset;
+      const end = range.offset + range.length - 1;
+      headers.set('Accept-Ranges', 'bytes');
+      headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
+      headers.set('Content-Length', String(range.length));
+      return new Response(ranged.body, { status: 206, headers });
+    }
+    headers.set('Accept-Ranges', 'bytes');
   }
 
+  if (size > 0) {
+    headers.set('Content-Length', String(size));
+  }
   return new Response(object.body, { headers });
 });
 
