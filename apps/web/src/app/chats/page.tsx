@@ -953,11 +953,16 @@ export default function ChatsPage() {
             return
           }
           for (const extra of extras) {
-            await api.chats.send(sendingChatId, {
+            const extraRes = await api.chats.send(sendingChatId, {
               messageType: extra.messageType,
               content: extra.content,
               scheduledAt,
             })
+            if (!extraRes.success) {
+              setError(extraRes.error ?? '予約の追加に失敗しました。')
+              await loadPendingScheduled(sendingChatId)
+              return
+            }
           }
           clearComposerDraft()
           setEditingScheduledId(null)
@@ -967,11 +972,16 @@ export default function ChatsPage() {
         }
 
         for (const payload of payloads) {
-          await api.chats.send(sendingChatId, {
+          const res = await api.chats.send(sendingChatId, {
             messageType: payload.messageType,
             content: payload.content,
             scheduledAt,
           })
+          if (!res.success) {
+            setError(res.error ?? '予約に失敗しました。')
+            await loadPendingScheduled(sendingChatId)
+            return
+          }
         }
         clearComposerDraft()
         await loadPendingScheduled(sendingChatId)
@@ -1068,7 +1078,6 @@ export default function ChatsPage() {
         setError(res.error ?? 'アップロード失敗')
         return
       }
-      setPendingImages([])
       setPendingPdf({
         url: res.data.url,
         fileName: res.data.fileName || file.name || 'document.pdf',
@@ -1105,7 +1114,6 @@ export default function ChatsPage() {
         uploaded.push(await uploadLineImage(file))
       }
       setPendingImages((prev) => [...prev, ...uploaded].slice(0, MAX_LINE_IMAGES_PER_PUSH))
-      setPendingPdf(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '画像のアップロードに失敗しました')
     } finally {
@@ -1864,7 +1872,7 @@ export default function ChatsPage() {
                       >
                         PDFを添付
                       </button>
-                      <span className="text-xs text-gray-500">最大 20MB · リンクは30日間有効（期限後は開けません）</span>
+                      <span className="text-xs text-gray-500">最大 20MB · リンクは30日間有効（期限後は開けません）· 写真・テキストと同時に予約できます</span>
                     </div>
                   )}
                 </div>
