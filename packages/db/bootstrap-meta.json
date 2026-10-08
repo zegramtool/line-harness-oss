@@ -53,7 +53,8 @@
     "045_menus_auto_tag.sql",
     "046_admin_sessions.sql",
     "047_scheduled_messages.sql",
-    "048_web_push.sql"
+    "048_web_push.sql",
+    "049_ai_organize.sql"
   ],
-  "migrationCount": 54
+  "migrationCount": 55
 }

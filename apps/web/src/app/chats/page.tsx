@@ -29,6 +29,7 @@ import { ChatLocationBubble } from '@/components/chats/chat-location-bubble'
 import { ChatVideoBubble } from '@/components/chats/chat-video-bubble'
 import { chatFilePreviewLabel } from '@/lib/chat-file-content'
 import { locationPreviewLabel } from '@line-crm/shared'
+import AiOrganizePanel from '@/components/chats/ai-organize-panel'
 
 interface Chat {
   id: string
@@ -1137,10 +1138,11 @@ export default function ChatsPage() {
   return (
     <div className="h-full flex flex-col lg:h-auto">
       <div className="hidden lg:block">
-        <Header title="オペレーターチャット" />
+        <Header title="オペレーターチャット" action={<AiOrganizePanel key={selectedAccountId} accountId={selectedAccountId} />} />
       </div>
 
       {/* Error */}
+      <div className="lg:hidden px-3 py-2 shrink-0"><AiOrganizePanel key={selectedAccountId} accountId={selectedAccountId} /></div>
       {error && (
         <div className="mx-3 lg:mx-0 mb-2 lg:mb-4 p-3 lg:p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0">
           {error}
