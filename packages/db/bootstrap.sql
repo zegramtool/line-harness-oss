@@ -906,6 +906,11 @@ CREATE INDEX ai_organize_items_job ON ai_organize_items(job_id,status,ordinal);
 
 CREATE INDEX ai_organize_jobs_account ON ai_organize_jobs(account_id,created_at);
 
+CREATE INDEX ai_organize_messages_friend_instant ON messages_log (
+  friend_id,
+  (julianday(created_at) - CASE WHEN created_at LIKE '%Z' OR substr(created_at,-6,1) IN ('+','-') THEN 0 ELSE 9.0/24 END)
+);
+
 CREATE UNIQUE INDEX ai_organize_one_active ON ai_organize_jobs((1)) WHERE status = 'ready';
 
 CREATE INDEX idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);

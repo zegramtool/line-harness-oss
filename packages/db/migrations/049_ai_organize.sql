@@ -1,4 +1,10 @@
 -- Manual AI jobs only. No LINE/chat/task state is changed by this feature.
+-- Match the legacy-JST/offset-aware period predicate exactly. No all-history
+-- scan is needed per preview; processed IDs still require checks in this range.
+CREATE INDEX IF NOT EXISTS ai_organize_messages_friend_instant ON messages_log (
+  friend_id,
+  (julianday(created_at) - CASE WHEN created_at LIKE '%Z' OR substr(created_at,-6,1) IN ('+','-') THEN 0 ELSE 9.0/24 END)
+);
 CREATE TABLE IF NOT EXISTS ai_organize_budgets (
   period TEXT PRIMARY KEY,
   limit_microusd INTEGER NOT NULL CHECK(limit_microusd >= 0),

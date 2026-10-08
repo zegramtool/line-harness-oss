@@ -32,6 +32,8 @@ function messageText(content: string): string {
   try {
     const parsed: unknown = JSON.parse(content);
     if (parsed && typeof parsed === 'object' && 'text' in parsed && typeof parsed.text === 'string') return parsed.text;
+    if (typeof parsed === 'string') return parsed;
+    return ''; // Unexpected JSON metadata is not conversation text.
   } catch { /* Historical imports store plain text. */ }
   return content;
 }
@@ -45,9 +47,10 @@ export async function createPreview(db: D1Database, env: AiBindings, accountId: 
   // Oldest unsummarized ingestion first prevents a busy friend starving others.
   const candidates = await db.prepare(`
     SELECT f.id, f.display_name, s.cursor_rowid, s.version, s.period_start, s.summary_json, MIN(m.rowid) AS first_new
-    FROM friends f JOIN messages_log m ON m.friend_id=f.id
+    FROM friends f
     LEFT JOIN ai_organize_summaries s ON s.account_id=f.line_account_id AND s.friend_id=f.id
-    WHERE f.line_account_id=? AND m.rowid<=?
+    CROSS JOIN messages_log m INDEXED BY ai_organize_messages_friend_instant
+    WHERE m.friend_id=f.id AND f.line_account_id=? AND m.rowid<=?
       AND NOT EXISTS(SELECT 1 FROM ai_organize_processed p WHERE p.account_id=f.line_account_id AND p.friend_id=f.id AND p.message_id=m.id)
       AND (m.line_account_id IS NULL OR m.line_account_id=f.line_account_id)
       AND ${HUMAN_TEXT}
@@ -62,7 +65,7 @@ export async function createPreview(db: D1Database, env: AiBindings, accountId: 
     const start = friend.period_start ?? period.from;
     const rows = await db.prepare(`
       SELECT m.rowid AS rowid,m.id,m.direction,m.source,m.content,m.created_at
-      FROM messages_log m WHERE m.friend_id=? AND (m.line_account_id IS NULL OR m.line_account_id=?)
+      FROM messages_log m INDEXED BY ai_organize_messages_friend_instant WHERE m.friend_id=? AND (m.line_account_id IS NULL OR m.line_account_id=?)
         AND m.rowid<=? AND ${HUMAN_TEXT}
         AND NOT EXISTS(SELECT 1 FROM ai_organize_processed p WHERE p.account_id=? AND p.friend_id=m.friend_id AND p.message_id=m.id)
         AND ${MESSAGE_INSTANT} >= julianday(?) AND ${MESSAGE_INSTANT} < julianday(?)

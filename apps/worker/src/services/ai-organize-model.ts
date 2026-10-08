@@ -81,11 +81,16 @@ export const SUMMARY_SCHEMA = {
   required: SECTIONS,
 };
 export function requestFor(input: AiInput, settings: AiSettings) {
+  // Explicit allowlist: saved UI links/profile fields must never become input.
+  const previous = input.previous ? Object.fromEntries(SECTIONS.map(key => [key, input.previous![key].map(item => ({
+    text: item.text, evidence: item.evidence.map(({ id, at }) => ({ id, at })),
+    reply_state: item.replyState, work_state: item.workState,
+  }))])) : null;
   return {
     model: settings.model, service_tier: 'default', store: false,
     reasoning: { effort: 'low' }, max_output_tokens: MAX_OUTPUT_TOKENS,
     instructions: INSTRUCTIONS,
-    input: [{ role: 'user', content: JSON.stringify({ previous: input.previous, messages: input.messages.map(({ id, at, direction, source, text }) => ({ id, at, direction, source: source ?? 'unknown', text })) }) }],
+    input: [{ role: 'user', content: JSON.stringify({ conversation_id: input.friendId, previous, messages: input.messages.map(({ id, at, direction, source, text }) => ({ id, at, direction, source: source ?? 'unknown', text })) }) }],
     text: { format: { type: 'json_schema', name: 'line_conversation_organize', strict: true, schema: SUMMARY_SCHEMA } },
   };
 }

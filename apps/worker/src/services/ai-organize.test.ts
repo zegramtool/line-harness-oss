@@ -25,12 +25,18 @@ function harness() {
   sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/049_ai_organize.sql', import.meta.url), 'utf8'));
   // Real SQLite, not SQL string matching. D1 batches serialize and roll back.
   let batchTail: Promise<unknown> = Promise.resolve();
+  const periodPlans: string[] = [];
   function prepare(sql: string, values: Array<string | number | null> = []) {
     return {
       sql, values,
       bind(...next: Array<string | number | null>) { return prepare(sql, next); },
       async first<T>() { return (sqlite.prepare(sql).get(...values) ?? null) as T | null; },
-      async all<T>() { return { success: true, results: sqlite.prepare(sql).all(...values) as T[], meta: {} }; },
+      async all<T>() {
+        if (sql.includes('INDEXED BY ai_organize_messages_friend_instant')) {
+          periodPlans.push(...sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map(row => String(row.detail)));
+        }
+        return { success: true, results: sqlite.prepare(sql).all(...values) as T[], meta: {} };
+      },
       async run() {
         const result = sqlite.prepare(sql).run(...values);
         return { success: true, results: [], meta: { changes: Number(result.changes) } };
@@ -52,7 +58,7 @@ function harness() {
   function add(id: string, text = '見積もりをお願いします', friend = 'friend-a', date = '2026-01-02T10:00:00+09:00', direction = 'incoming') {
     sqlite.prepare(`INSERT INTO messages_log VALUES(?,?,?,'text',?,?,?,?)`).run(id, friend, direction, text, direction === 'outgoing' ? 'manual' : 'user', friend === 'friend-a' ? 'account-a' : 'account-b', date);
   }
-  return { db, sqlite, add };
+  return { db, sqlite, add, periodPlans };
 }
 function output(id = 'msg-1') {
   return {
@@ -74,6 +80,32 @@ async function ready(h: ReturnType<typeof harness>) {
 }
 
 describe('manual AI organize — synthetic data, real SQLite, mocked provider', () => {
+  test('replied conversations included; actual period query plans use bounded index searches', async () => {
+    const h = harness(); h.add('incoming'); h.add('replied', '見積書を送付済み', 'friend-a', '2026-01-03T12:00:00Z', 'outgoing');
+    h.add('old', '期間外', 'friend-a', '2025-01-03T12:00:00Z');
+    const p = await createPreview(h.db, env, 'account-a', 'owner', from, to);
+    expect(p.estimate.messages).toBe(2);
+    const messagePlans = h.periodPlans.filter(detail => detail.includes('ai_organize_messages_friend_instant'));
+    expect(messagePlans).toHaveLength(2);
+    for (const plan of messagePlans) {
+      expect(plan).toContain('SEARCH m USING INDEX');
+      expect(plan).toContain('friend_id=? AND <expr>>? AND <expr><?');
+    }
+  });
+  test('provider payload allowlists text/summary; no profile, attachment, key, row cursor or UI URL', async () => {
+    const h = harness(); h.add('msg-1');
+    h.sqlite.prepare('UPDATE messages_log SET content=? WHERE id=?').run(JSON.stringify({ text: '見積り依頼', attachment: 'PRIVATE_ATTACHMENT', accessToken: 'PRIVATE_KEY', profile: 'PRIVATE_PROFILE' }), 'msg-1');
+    const p = await ready(h), mock = provider(); await stepJob(h.db, env, p.id, 'account-a', false, mock);
+    const payload = String(mock.mock.calls[0][1]?.body);
+    for (const value of ['PRIVATE_ATTACHMENT', 'PRIVATE_KEY', 'PRIVATE_PROFILE', '合成のお客様', 'rowid', 'baseCursor']) expect(payload).not.toContain(value);
+    expect(JSON.parse(JSON.parse(payload).input[0].content).conversation_id).toBe('friend-a');
+    h.add('msg-2'); const next = await createPreview(h.db, env, 'account-a', 'owner', from, to);
+    const saved = JSON.parse(String(h.sqlite.prepare('SELECT input_json FROM ai_organize_items WHERE job_id=?').get(next.id)?.input_json)) as AiInput;
+    const nextPayload = JSON.stringify(requestFor(saved, aiSettings(env)));
+    expect(nextPayload).not.toContain('/chats?friend=');
+    expect(nextPayload).not.toContain('href');
+    expect(nextPayload).toContain('見積もりの依頼');
+  });
   test('disabled by default; preview is bounded/account scoped and calls no provider', async () => {
     const h = harness(); h.add('msg-1'); h.add('other', '秘密の別会話', 'friend-b');
     const job = await createPreview(h.db, {}, 'account-a', 'owner', from, to);
