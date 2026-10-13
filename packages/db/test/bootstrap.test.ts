@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
+import { splitSqlStatements } from '../scripts/sql-statements.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, '..');
@@ -12,13 +13,6 @@ const BOOTSTRAP_PATH = join(PKG_ROOT, 'bootstrap.sql');
 const MIGRATIONS_DIR = join(PKG_ROOT, 'migrations');
 
 const BENIGN_SQLITE_ERROR = /duplicate column name|already exists/i;
-
-function splitSqlStatements(sql: string): string[] {
-  return sql
-    .split(/;\s*(?:\r?\n|$)/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-}
 
 function applyMigrationReplay(db: Database.Database): void {
   db.exec(readFileSync(join(PKG_ROOT, 'schema.sql'), 'utf8'));

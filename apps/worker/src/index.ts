@@ -81,9 +81,11 @@ import { richMenuGroups } from './routes/rich-menu-groups.js';
 import updates from './routes/updates.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
+import { aiOrganize } from './routes/ai-organize.js';
+import type { AiBindings } from './services/ai-organize-model.js';
 
 export type Env = {
-  Bindings: {
+  Bindings: AiBindings & {
     DB: D1Database;
     IMAGES: R2Bucket;
     ASSETS: Fetcher;
@@ -175,6 +177,7 @@ app.route('/', templates);
 app.route('/', chats);
 app.route('/', scheduledMessages);
 app.route('/', conversations);
+app.route('/', aiOrganize);
 app.route('/', stripe);
 app.route('/', health);
 app.route('/', automations);

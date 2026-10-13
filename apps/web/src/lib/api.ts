@@ -101,7 +101,7 @@ export function setCsrfToken(token: string | undefined | null): void {
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+export async function fetchApi<T>(path: string, options?: RequestInit, includeAiErrorCode = false): Promise<T> {
   const method = (options?.method ?? 'GET').toUpperCase()
   const csrfHeaders: Record<string, string> = {}
   if (MUTATING_METHODS.has(method) && !usesBearerAuth()) {
@@ -118,7 +118,19 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    if (includeAiErrorCode) {
+      try {
+        const body: unknown = await res.json()
+        if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' && /^AI_[A-Z0-9_]+$/.test(body.error)) {
+          throw new Error(body.error)
+        }
+      } catch (error) {
+        if (error instanceof Error && /^AI_[A-Z0-9_]+$/.test(error.message)) throw error
+      }
+    }
+    throw new Error(`API error: ${res.status}`)
+  }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
