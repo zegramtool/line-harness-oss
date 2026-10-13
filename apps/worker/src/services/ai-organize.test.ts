@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { aiOrganize } from '../routes/ai-organize.js';
 import { cancelJob, createPreview, getJob, startJob, stepJob, validatePeriod } from './ai-organize.js';
 import {
-  aiSettings, boundedChunk, callCap, inputBound, MAX_INPUT_BYTES, parseResponse, requestFor, validateSummary,
+  aiSettings, boundedChunk, callCap, inputBound, MAX_INPUT_BYTES, parseResponse, parseGeminiResponse, requestFor, validateSummary,
   type AiInput,
 } from './ai-organize-model.js';
 import type { Env } from '../index.js';
@@ -80,6 +80,37 @@ async function ready(h: ReturnType<typeof harness>) {
 }
 
 describe('manual AI organize — synthetic data, real SQLite, mocked provider', () => {
+  test('Gemini requires separate key and explicit paid confirmation, with no OpenAI fallback', async () => {
+    const gemini = { AI_ORGANIZE_PROVIDER: 'gemini', AI_ORGANIZE_ENABLED: 'true', GEMINI_API_KEY: 'synthetic-google-key' };
+    expect(aiSettings(gemini).enabled).toBe(false);
+    expect(aiSettings({ ...gemini, OPENAI_API_KEY: 'synthetic-openai-key' }).enabled).toBe(false);
+    const paid = { ...gemini, AI_ORGANIZE_GEMINI_PAID_CONFIRMED: 'true' };
+    expect(aiSettings(paid)).toMatchObject({ enabled: true, model: 'gemini-2.5-flash-lite', inputPrice: 0.10, outputPrice: 0.40 });
+    const h = harness(); h.add('msg-1');
+    const p = await createPreview(h.db, paid, 'account-a', 'owner', from, to);
+    await startJob(h.db, paid, p.id, 'account-a', 'owner');
+    const mock = vi.fn(async () => Response.json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(output()) }] } }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 40, thoughtsTokenCount: 10, totalTokenCount: 150 } }));
+    const job = await stepJob(h.db, paid, p.id, 'account-a', false, mock);
+    expect(job.status).toBe('completed');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0][0]).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent');
+    expect(mock.mock.calls[0][1]?.headers).toMatchObject({ 'x-goog-api-key': 'synthetic-google-key' });
+    expect(String(mock.mock.calls[0][0])).not.toContain('key=');
+    const body = JSON.parse(String(mock.mock.calls[0][1]?.body));
+    expect(body.generationConfig).toMatchObject({ candidateCount: 1, maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 }, responseMimeType: 'application/json' });
+    expect(body.tools).toBeUndefined();
+    expect(JSON.parse(body.contents[0].parts[0].text)).toMatchObject({ conversation_id: 'friend-a' });
+    expect(job.items[0].usage[0]).toMatchObject({ output_tokens: 50, output_tokens_details: { reasoning_tokens: 10 } });
+    expect(job.items[0].chargedUsd).toBe(0.000030);
+  });
+  test('Gemini refuses blocked/truncated output and invalid or understated usage', () => {
+    const response = { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(output()) }] } }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 } };
+    expect(parseGeminiResponse(response).usage.output_tokens).toBe(50);
+    expect(() => parseGeminiResponse({ ...response, promptFeedback: { blockReason: 'SAFETY' } })).toThrow('AI_RESPONSE_REFUSED');
+    expect(() => parseGeminiResponse({ ...response, candidates: [{ ...response.candidates[0], finishReason: 'MAX_TOKENS' }] })).toThrow('AI_RESPONSE_INCOMPLETE');
+    expect(() => parseGeminiResponse({ ...response, usageMetadata: { ...response.usageMetadata, thoughtsTokenCount: 10 } })).toThrow('AI_USAGE_INVALID');
+    expect(() => parseGeminiResponse({ ...response, usageMetadata: {} })).toThrow('AI_USAGE_INVALID');
+  });
   test('replied conversations included; actual period query plans use bounded index searches', async () => {
     const h = harness(); h.add('incoming'); h.add('replied', '見積書を送付済み', 'friend-a', '2026-01-03T12:00:00Z', 'outgoing');
     h.add('old', '期間外', 'friend-a', '2025-01-03T12:00:00Z');

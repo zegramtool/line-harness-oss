@@ -14,6 +14,26 @@ AIは返信、チャット状態、既存タスク、完了判定を変更しな
 
 ## 接続と送信内容
 
+### Google Geminiへの切り替え
+
+Gemini接続を追加した。未指定のproviderは互換性のためOpenAIのままで、自動切替・高価なモデルへのフォールバックはない。以下の設定を使う。
+
+| 種類 | 名前 | 値 |
+|---|---|---|
+| Secret | GEMINI_API_KEY | ユーザーがこの用途で承認したGoogleのキー |
+| Text | AI_ORGANIZE_PROVIDER | gemini |
+| Text | AI_ORGANIZE_MODEL | gemini-2.5-flash-lite |
+| Text | AI_ORGANIZE_MAX_INPUT_USD_PER_M | 0.10 |
+| Text | AI_ORGANIZE_OUTPUT_USD_PER_M | 0.40 |
+| Text | AI_ORGANIZE_GEMINI_PAID_CONFIRMED | true（有料枠のプロジェクト確認とGoogleへの会話送信の承認後のみ） |
+| Text | AI_ORGANIZE_ENABLED | true（接続・送信承認後のみ） |
+
+Googleへの送信先は固定の`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent`。APIキーは`x-goog-api-key`ヘッダーに置きURLに含めない。送信する会話項目はOpenAIと同じ最小項目。検索・ファイル・ツール・明示的キャッシュは使わず、1候補・推論予算0・出力2048までとする。実行画面の送信先表示もGoogleへ切り替わる。ブロック、打切り、usage欠落/矛盾は成功扱いにせず既存要約と未処理状態を保持する。usageの出力は候補＋推論の合計で精算する。
+
+2026-10-13確認の[公式料金](https://ai.google.dev/gemini-api/docs/pricing)は100万トークンあたり入力$0.10、出力（推論含む）$0.40。GPT-6 Lunaの通常入力$0.10と同額、出力$0.50に対して20%低い。Googleの新しいFlash-Liteが必ず安いわけではない。無料枠は製品改善へのデータ利用あり、有料枠はなしと公式に記載されているため、お客様の会話は有料枠確認が必須。フラグはユーザーによる確認の記録で、プロジェクト課金状態をAPIで自動検査する機能ではない。新規の課金契約・キー作成・別アプリのキー転記は行わない。
+
+既存の1回$0.10・UTC月$3の台帳と処理済みIDを共用する。provider/model/単価変更前のプレビューと停止ジョブは設定一致チェックで停止する。切替前に古いジョブを中止して精算し、新たにプレビューする。既存保存要約がある場合はその要約もGoogleへ送られるため、それを含む送信承認が必要。本番varsをダッシュボードから設定した場合、今後のデプロイでvarsが上書きされ得るので有効状態を確認する。
+
 既定は **無効**。`AI_ORGANIZE_ENABLED=true` と Worker Secret `OPENAI_API_KEY` の両方が必要。既存LINE MCPやowner APIキーをモデルに渡さず、モデルのツールも登録しない。
 
 送信先は固定の `https://api.openai.com/v1/responses`。会話のテキスト、方向、発言の出所、お客様を区別するアプリ内の会話ID、内部発言ID、発言日時、前回保存要約のみ。会話IDはfriends.idでありLINE user IDではない。保存要約はテキスト・根拠ID/日時・候補状態だけに絞り、画面用URLも除く。氏名などのプロフィール項目、LINE user ID、画像・PDF本体、既知の自動配信・自動返信は対象外。過去CSV履歴はoutgoingも含めるが、人間の返信か不明な場合はunknownとする。ただし原文テキストに含まれる氏名、住所、電話番号等は送信される。実行画面にも明記する。`store:false` を指定する。これはAPIの応答保存指定であり、プロバイダー全体のデータ保持条件を変更するものではない。

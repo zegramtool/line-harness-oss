@@ -132,7 +132,7 @@ export default function AiOrganizePanel({ accountId }: { accountId: string | nul
           {estimate.moreAvailable && <p className="text-amber-800">上限のため未処理分が残ります。処理後にもう一度件数確認すると、続きだけを対象にします。</p>}
           {!estimate.configured && <p className="text-amber-800">AI接続は未有効です。本番利用の承認・設定後に実行できます。</p>}
           {job.status === 'preview' && <>
-            <p>実行すると対象会話のテキスト・発言日時・お客様を区別するアプリ内の会話ID・発言ID・保存要約をOpenAI APIへ送信します。プロフィールの氏名・LINE user ID・添付本体は送信しません。本文に含まれる氏名や住所などは送信対象です。</p>
+            <p>実行すると対象会話のテキスト・発言日時・お客様を区別するアプリ内の会話ID・発言ID・保存要約を{job.estimate.model.startsWith('gemini-') ? 'Google Gemini API' : 'OpenAI API'}へ送信します。プロフィールの氏名・LINE user ID・添付本体は送信しません。本文に含まれる氏名や住所などは送信対象です。</p>
             <button disabled={busy || !estimate.configured || !estimate.messages} onClick={() => run(true)} className="bg-indigo-600 text-white rounded-lg px-3 py-2 disabled:opacity-50">この範囲と予算で実行</button>
             {!estimate.messages && <p>対象の新着テキストはありません。APIは呼び出しません。</p>}
           </>}

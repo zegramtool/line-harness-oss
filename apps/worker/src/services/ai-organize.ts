@@ -1,7 +1,7 @@
 import type { AiOrganizeEstimate, AiOrganizeJob, AiOrganizeSummary } from '@line-crm/shared';
 import {
   aiSettings, boundedChunk, callCap, inputBound, MAX_ATTEMPTS, MAX_CONVERSATIONS, MAX_INPUT_BYTES,
-  MAX_MESSAGES, MAX_OUTPUT_TOKENS, parseResponse, readBoundedResponse, requestFor, SECTIONS, validateSummary,
+  MAX_MESSAGES, MAX_OUTPUT_TOKENS, parseResponse, parseGeminiResponse, readBoundedResponse, requestFor, SECTIONS, validateSummary,
   type AiBindings, type AiInput, type AiSettings,
 } from './ai-organize-model.js';
 
@@ -207,12 +207,17 @@ export async function stepJob(db: D1Database, env: AiBindings, id: string, accou
   if (!claimed.meta.changes) return getJob(db, id, accountId);
   let usageRecord: unknown = { uncertain: true, chargedMicrousd: item.cap_microusd };
   try {
-    const response = await fetcher('https://api.openai.com/v1/responses', {
-      method: 'POST', headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    const endpoint = settings.provider === 'gemini'
+      ? `https://generativelanguage.googleapis.com/v1beta/models/${settings.model}:generateContent` : 'https://api.openai.com/v1/responses';
+    const auth: Record<string, string> = settings.provider === 'gemini'
+      ? { 'x-goog-api-key': env.GEMINI_API_KEY! } : { Authorization: `Bearer ${env.OPENAI_API_KEY}` };
+    const response = await fetcher(endpoint, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
       body: JSON.stringify(requestFor(input, settings)), signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error(`AI_PROVIDER_HTTP_${response.status}`); }
-    const parsed = parseResponse(await readBoundedResponse(response));
+    const raw = await readBoundedResponse(response);
+    const parsed = settings.provider === 'gemini' ? parseGeminiResponse(raw) : parseResponse(raw);
     // Output usage includes reasoning tokens. No cache rebate is assumed.
     const cost = Math.ceil(parsed.usage.input_tokens * settings.inputPrice + parsed.usage.output_tokens * settings.outputPrice);
     if (cost > item.cap_microusd || parsed.usage.input_tokens > inputBound(input, settings) || parsed.usage.output_tokens > MAX_OUTPUT_TOKENS) throw new Error('AI_USAGE_EXCEEDED_BOUND');

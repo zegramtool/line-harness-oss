@@ -9,6 +9,7 @@ export const MAX_ATTEMPTS = 2;
 export const MAX_OUTPUT_TOKENS = 2048;
 
 export interface AiSettings {
+  provider: 'openai' | 'gemini';
   enabled: boolean;
   model: string;
   inputPrice: number;
@@ -17,6 +18,9 @@ export interface AiSettings {
   monthLimit: number;
 }
 export interface AiBindings {
+  AI_ORGANIZE_PROVIDER?: string;
+  GEMINI_API_KEY?: string;
+  AI_ORGANIZE_GEMINI_PAID_CONFIRMED?: string;
   AI_ORGANIZE_ENABLED?: string;
   OPENAI_API_KEY?: string;
   AI_ORGANIZE_MODEL?: string;
@@ -31,17 +35,24 @@ function positive(value: string | undefined, fallback: number): number {
   return n;
 }
 export function aiSettings(env: AiBindings): AiSettings {
-  const model = env.AI_ORGANIZE_MODEL || 'gpt-6-luna';
+  const provider = env.AI_ORGANIZE_PROVIDER || 'openai';
+  if (provider !== 'openai' && provider !== 'gemini') throw new Error('AI_CONFIG_INVALID');
+  const defaultModel = provider === 'gemini' ? 'gemini-2.5-flash-lite' : 'gpt-6-luna';
+  const model = env.AI_ORGANIZE_MODEL || defaultModel;
   if (!/^[a-z0-9][a-z0-9.-]{1,100}$/.test(model)) throw new Error('AI_CONFIG_INVALID');
-  if (model !== 'gpt-6-luna' && (!env.AI_ORGANIZE_MAX_INPUT_USD_PER_M || !env.AI_ORGANIZE_OUTPUT_USD_PER_M)) {
+  if (provider === 'gemini' && model !== defaultModel) throw new Error('AI_CONFIG_INVALID');
+  if (provider === 'openai' && model.startsWith('gemini-')) throw new Error('AI_CONFIG_INVALID');
+  if (model !== defaultModel && (!env.AI_ORGANIZE_MAX_INPUT_USD_PER_M || !env.AI_ORGANIZE_OUTPUT_USD_PER_M)) {
     throw new Error('AI_MODEL_PRICES_REQUIRED');
   }
   return {
-    enabled: env.AI_ORGANIZE_ENABLED === 'true' && !!env.OPENAI_API_KEY,
+    provider,
+    enabled: env.AI_ORGANIZE_ENABLED === 'true' && (provider === 'gemini'
+      ? !!env.GEMINI_API_KEY && env.AI_ORGANIZE_GEMINI_PAID_CONFIRMED === 'true' : !!env.OPENAI_API_KEY),
     model,
     // Includes worst-case cache-write pricing. No cache discount assumed.
-    inputPrice: positive(env.AI_ORGANIZE_MAX_INPUT_USD_PER_M, 0.125),
-    outputPrice: positive(env.AI_ORGANIZE_OUTPUT_USD_PER_M, 0.5),
+    inputPrice: positive(env.AI_ORGANIZE_MAX_INPUT_USD_PER_M, provider === 'gemini' ? 0.10 : 0.125),
+    outputPrice: positive(env.AI_ORGANIZE_OUTPUT_USD_PER_M, provider === 'gemini' ? 0.40 : 0.5),
     jobLimit: Math.floor(positive(env.AI_ORGANIZE_JOB_LIMIT_USD, 0.10) * 1_000_000),
     monthLimit: Math.floor(positive(env.AI_ORGANIZE_MONTH_LIMIT_USD, 3) * 1_000_000),
   };
@@ -86,11 +97,18 @@ export function requestFor(input: AiInput, settings: AiSettings) {
     text: item.text, evidence: item.evidence.map(({ id, at }) => ({ id, at })),
     reply_state: item.replyState, work_state: item.workState,
   }))])) : null;
+  const context = JSON.stringify({ conversation_id: input.friendId, previous, messages: input.messages.map(({ id, at, direction, source, text }) => ({ id, at, direction, source: source ?? 'unknown', text })) });
+  if (settings.provider === 'gemini') return {
+    systemInstruction: { parts: [{ text: INSTRUCTIONS }] },
+    contents: [{ role: 'user', parts: [{ text: context }] }],
+    generationConfig: { candidateCount: 1, maxOutputTokens: MAX_OUTPUT_TOKENS,
+      thinkingConfig: { thinkingBudget: 0 }, responseMimeType: 'application/json', responseJsonSchema: SUMMARY_SCHEMA },
+  };
   return {
     model: settings.model, service_tier: 'default', store: false,
     reasoning: { effort: 'low' }, max_output_tokens: MAX_OUTPUT_TOKENS,
     instructions: INSTRUCTIONS,
-    input: [{ role: 'user', content: JSON.stringify({ conversation_id: input.friendId, previous, messages: input.messages.map(({ id, at, direction, source, text }) => ({ id, at, direction, source: source ?? 'unknown', text })) }) }],
+    input: [{ role: 'user', content: context }],
     text: { format: { type: 'json_schema', name: 'line_conversation_organize', strict: true, schema: SUMMARY_SCHEMA } },
   };
 }
@@ -158,6 +176,28 @@ export function validateSummary(value: unknown, input: AiInput): AiOrganizeSumma
   return summary;
 }
 export interface AiUsage { input_tokens: number; output_tokens: number; output_tokens_details?: { reasoning_tokens?: number }; input_tokens_details?: Record<string, unknown> }
+export function parseGeminiResponse(raw: unknown): { value: unknown; usage: AiUsage } {
+  const data = object(raw);
+  if (data.promptFeedback && object(data.promptFeedback).blockReason) throw new Error('AI_RESPONSE_REFUSED');
+  if (!Array.isArray(data.candidates) || data.candidates.length !== 1) throw new Error('AI_RESPONSE_INCOMPLETE');
+  const candidate = object(data.candidates[0]);
+  if (candidate.finishReason !== 'STOP') throw new Error('AI_RESPONSE_INCOMPLETE');
+  const content = object(candidate.content);
+  if (!Array.isArray(content.parts) || !content.parts.length) throw new Error('AI_OUTPUT_INVALID');
+  let text = '';
+  for (const part of content.parts) {
+    const p = object(part);
+    if (typeof p.text !== 'string' || p.thought === true || p.functionCall || p.inlineData) throw new Error('AI_OUTPUT_INVALID');
+    text += p.text;
+  }
+  const usage = object(data.usageMetadata);
+  const inputTokens = usage.promptTokenCount, candidateTokens = usage.candidatesTokenCount, thoughts = usage.thoughtsTokenCount ?? 0;
+  if ([inputTokens, candidateTokens, thoughts, usage.totalTokenCount].some(n => !Number.isSafeInteger(n) || Number(n) < 0)) throw new Error('AI_USAGE_INVALID');
+  const outputTokens = Number(candidateTokens) + Number(thoughts);
+  if (Number(usage.totalTokenCount) !== Number(inputTokens) + outputTokens || Number(usage.toolUsePromptTokenCount ?? 0) !== 0) throw new Error('AI_USAGE_INVALID');
+  return { value: JSON.parse(text), usage: { input_tokens: Number(inputTokens), output_tokens: outputTokens,
+    output_tokens_details: { reasoning_tokens: Number(thoughts) } } };
+}
 export function parseResponse(raw: unknown): { value: unknown; usage: AiUsage } {
   const data = object(raw);
   if (data.status !== 'completed' || !Array.isArray(data.output)) throw new Error('AI_RESPONSE_INCOMPLETE');
