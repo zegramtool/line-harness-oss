@@ -1169,7 +1169,7 @@ export default function ChatsPage() {
       {/* Error */}
       <div className="lg:hidden px-3 py-2 shrink-0"><AiOrganizePanel key={selectedAccountId} accountId={selectedAccountId} /></div>
       {error && (
-        <div className="mx-3 lg:mx-0 mb-2 lg:mb-4 p-3 lg:p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0">
+        <div role="alert" className={`${selectedChatId || selectedFriendId ? 'hidden lg:block ' : ''}mx-3 lg:mx-0 mb-2 lg:mb-4 p-3 lg:p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0`}>
           {error}
         </div>
       )}
@@ -1323,6 +1323,12 @@ export default function ChatsPage() {
             ? 'fixed inset-0 z-[60] flex lg:relative lg:z-auto lg:inset-auto'
             : 'hidden lg:flex'
         }`}>
+          {/* The mobile chat covers the page-level alert, so show errors inside it. */}
+          {error && (
+            <div role="alert" className="lg:hidden m-2 p-3 max-h-28 overflow-y-auto bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0">
+              {error}
+            </div>
+          )}
           {selectedFriendId && !selectedChatId ? (
             /* Direct message to friend without existing chat */
             <DirectMessagePanel
