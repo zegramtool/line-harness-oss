@@ -30,6 +30,9 @@ import { ChatVideoBubble } from '@/components/chats/chat-video-bubble'
 import { chatFilePreviewLabel } from '@/lib/chat-file-content'
 import { locationPreviewLabel } from '@line-crm/shared'
 import AiOrganizePanel from '@/components/chats/ai-organize-panel'
+import { createChatDeepLinkConsumer } from '@/lib/chat-deep-link'
+
+type ChatScope = { chatId: string | null }
 
 interface Chat {
   id: string
@@ -560,6 +563,12 @@ export default function ChatsPage() {
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const pdfInputRef = useRef<HTMLInputElement>(null)
+  // Object identity invalidates A -> B -> A uploads as well as A -> B.
+  const chatScopeRef = useRef<ChatScope>({ chatId: null })
+  const pdfPickerScopeRef = useRef<ChatScope | null>(null)
+  const imagePickerScopeRef = useRef<ChatScope | null>(null)
+  const pdfUploadRef = useRef<object | null>(null)
+  const imageUploadRef = useRef<object | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [sendTiming, setSendTiming] = useState<'now' | 'scheduled'>('now')
   const [scheduledAtLocal, setScheduledAtLocal] = useState(defaultScheduledLocalValue)
@@ -570,12 +579,44 @@ export default function ChatsPage() {
   const flushingUndoIdsRef = useRef(new Set<string>())
   const [imageViewer, setImageViewer] = useState<{ urls: string[]; index: number } | null>(null)
 
+  const clearComposerDraft = useCallback(() => {
+    setMessageContent('')
+    setPendingImages([])
+    setPendingPdf(null)
+  }, [])
+
+  const clearScheduledEdit = useCallback(() => {
+    setEditingScheduledId(null)
+    clearComposerDraft()
+    setSendTiming('now')
+  }, [clearComposerDraft])
+
+  const handleSelectChat = useCallback((chatId: string | null) => {
+    if (chatScopeRef.current.chatId === chatId) return
+    // Invalidate asynchronous work before React renders the new recipient.
+    chatScopeRef.current = { chatId }
+    pdfUploadRef.current = null
+    imageUploadRef.current = null
+    setPdfUploading(false)
+    setImageUploading(false)
+    setSelectedChatId(chatId)
+    setSelectedFriendId(null)
+    setChatDetail(null)
+    setPendingScheduled([])
+    setDetailLoading(chatId !== null)
+    setNotes('')
+    setError('')
+    clearScheduledEdit()
+  }, [clearScheduledEdit])
+
   const loadPendingScheduled = useCallback(async (chatId: string) => {
+    const scope = chatScopeRef.current
+    if (scope.chatId !== chatId) return
     try {
       const res = await api.chats.listScheduled(chatId)
-      if (res.success) setPendingScheduled(res.data)
+      if (scope === chatScopeRef.current && res.success) setPendingScheduled(res.data)
     } catch {
-      setPendingScheduled([])
+      if (scope === chatScopeRef.current) setPendingScheduled([])
     }
   }, [])
 
@@ -650,10 +691,13 @@ export default function ChatsPage() {
   }, [sendMode])
 
   const loadChatDetail = useCallback(async (chatId: string, options?: { silent?: boolean }) => {
+    const scope = chatScopeRef.current
+    if (scope.chatId !== chatId) return
     if (!options?.silent) setDetailLoading(true)
     if (!options?.silent) setError('')
     try {
       const res = await api.chats.get(chatId)
+      if (scope !== chatScopeRef.current) return
       if (res.success) {
         setChatDetail(res.data as unknown as ChatDetail)
         setNotes((res.data as unknown as ChatDetail).notes || '')
@@ -663,11 +707,12 @@ export default function ChatsPage() {
         setError(`チャット詳細の読み込みに失敗しました: ${errMsg}`)
       }
     } catch (err) {
+      if (scope !== chatScopeRef.current) return
       // ネットワーク / parse / auth fail などの例外。empty catch だと原因不明だったので詳細を出す。
       const msg = err instanceof Error ? err.message : String(err)
       setError(`チャット詳細の読み込みに失敗しました: ${msg}`)
     } finally {
-      if (!options?.silent) setDetailLoading(false)
+      if (scope === chatScopeRef.current && !options?.silent) setDetailLoading(false)
     }
   }, [])
 
@@ -676,13 +721,16 @@ export default function ChatsPage() {
   }, [loadChats])
 
   // Deep-link: 通知タップやフォームからの ?friend=<friendId>
-  // chat list の id = friend_id。pageshow は iOS が PWA を起こしたときに再適用する。
+  // A picker/PWA resume must not reapply a notification already opened earlier.
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const applyFriendQuery = () => {
-      const friendId = new URLSearchParams(window.location.search).get('friend')
+    const consume = createChatDeepLinkConsumer()
+    const applyFriendQuery = (event?: Event) => {
+      const friendId = new URLSearchParams(window.location.search).get('friend') || null
+      const eventType = event?.type === 'popstate' ? 'popstate' : event ? 'pageshow' : 'initial'
+      if (!consume(friendId, eventType)) return
+      handleSelectChat(friendId)
       if (!friendId) return
-      setSelectedChatId(friendId)
       setStatusFilter('all')
       setUnansweredOnly(false)
     }
@@ -693,7 +741,7 @@ export default function ChatsPage() {
       window.removeEventListener('pageshow', applyFriendQuery)
       window.removeEventListener('popstate', applyFriendQuery)
     }
-  }, [])
+  }, [handleSelectChat])
 
   useEffect(() => {
     if (selectedChatId) {
@@ -811,23 +859,6 @@ export default function ChatsPage() {
     }
   }, [messageContent])
 
-  const clearComposerDraft = useCallback(() => {
-    setMessageContent('')
-    setPendingImages([])
-    setPendingPdf(null)
-  }, [])
-
-  const clearScheduledEdit = useCallback(() => {
-    setEditingScheduledId(null)
-    clearComposerDraft()
-    setSendTiming('now')
-  }, [clearComposerDraft])
-
-  const handleSelectChat = (chatId: string) => {
-    setSelectedChatId(chatId)
-    clearScheduledEdit()
-  }
-
   const handleStartEditScheduled = (item: ScheduledChatMessage) => {
     setError('')
     setEditingScheduledId(item.id)
@@ -916,7 +947,7 @@ export default function ChatsPage() {
   }
 
   const handleSendMessage = async () => {
-    if (!selectedChatId || sending || sendLockRef.current || imageUploading || pdfUploading) return
+    if (!selectedChatId || selectedChatId !== chatScopeRef.current.chatId || sending || sendLockRef.current || imageUploading || pdfUploading) return
     if (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf) return
     const sendingChatId = selectedChatId
     sendLockRef.current = true
@@ -1061,8 +1092,13 @@ export default function ChatsPage() {
     }
   }
 
-  const handleMobilePdfSelect = async (file: File | undefined) => {
+  const handleMobilePdfSelect = async (file: File | undefined, scope = chatScopeRef.current) => {
     if (!file) return
+    if (scope !== chatScopeRef.current || !scope.chatId) {
+      setError('チャットが切り替わったため、PDFを選び直してください。')
+      return
+    }
+    if (pdfUploadRef.current || sending) return
     if (!isPdfFile(file)) {
       setError('PDF ファイルを選んでください')
       return
@@ -1071,10 +1107,14 @@ export default function ChatsPage() {
       setError('PDF は 20MB 以下にしてください')
       return
     }
+    const upload = {}
+    pdfUploadRef.current = upload
+    const isCurrent = () => scope === chatScopeRef.current && pdfUploadRef.current === upload
     setPdfUploading(true)
     setError('')
     try {
       const res = await api.uploads.pdf(file)
+      if (!isCurrent()) return
       if (!res.success) {
         setError(res.error ?? 'アップロード失敗')
         return
@@ -1087,15 +1127,24 @@ export default function ChatsPage() {
         expiresAtLabel: res.data.expiresAtLabel,
       })
     } catch (err) {
+      if (!isCurrent()) return
       const msg = err instanceof Error ? err.message : String(err)
       setError(`PDF のアップロードに失敗しました: ${msg}`)
     } finally {
-      setPdfUploading(false)
+      if (isCurrent()) {
+        pdfUploadRef.current = null
+        setPdfUploading(false)
+      }
     }
   }
 
-  const handleImageFilesSelect = async (fileList: FileList | File[] | null | undefined) => {
-    if (!fileList?.length || imageUploading || sending) return
+  const handleImageFilesSelect = async (fileList: FileList | File[] | null | undefined, scope = chatScopeRef.current) => {
+    if (!fileList?.length) return
+    if (scope !== chatScopeRef.current || !scope.chatId) {
+      setError('チャットが切り替わったため、画像を選び直してください。')
+      return
+    }
+    if (imageUploadRef.current || sending) return
     const files = Array.from(fileList)
     const remaining = MAX_LINE_IMAGES_PER_PUSH - pendingImages.length
     if (remaining <= 0) {
@@ -1108,15 +1157,21 @@ export default function ChatsPage() {
     } else {
       setError('')
     }
+    const upload = {}
+    imageUploadRef.current = upload
+    const isCurrent = () => scope === chatScopeRef.current && imageUploadRef.current === upload
     setImageUploading(true)
     try {
       const failures: string[] = []
       for (const file of toUpload) {
+        if (!isCurrent()) return
         try {
           const uploaded = await uploadLineImage(file)
+          if (!isCurrent()) return
           // 一件の失敗で、アップロード済みの画像や後続の選択を失わない。
           setPendingImages((prev) => [...prev, uploaded].slice(0, MAX_LINE_IMAGES_PER_PUSH))
         } catch (err) {
+          if (!isCurrent()) return
           const detail = err instanceof Error ? err.message : '画像のアップロードに失敗しました'
           failures.push(`${file.name}: ${detail}`)
         }
@@ -1128,7 +1183,10 @@ export default function ChatsPage() {
         setError(`${limitNotice}${failures.join('\n')}`)
       }
     } finally {
-      setImageUploading(false)
+      if (isCurrent()) {
+        imageUploadRef.current = null
+        setImageUploading(false)
+      }
     }
   }
 
@@ -1323,6 +1381,36 @@ export default function ChatsPage() {
             ? 'fixed inset-0 z-[60] flex lg:relative lg:z-auto lg:inset-auto'
             : 'hidden lg:flex'
         }`}>
+          {/* Keep picker inputs mounted while the selected chat detail is loading. */}
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            className="hidden"
+            onClick={() => { pdfPickerScopeRef.current = chatScopeRef.current }}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              const scope = pdfPickerScopeRef.current ?? chatScopeRef.current
+              pdfPickerScopeRef.current = null
+              void handleMobilePdfSelect(file, scope)
+              e.target.value = ''
+            }}
+          />
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/*"
+            multiple
+            className="hidden"
+            onClick={() => { imagePickerScopeRef.current = chatScopeRef.current }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              const scope = imagePickerScopeRef.current ?? chatScopeRef.current
+              imagePickerScopeRef.current = null
+              void handleImageFilesSelect(files, scope)
+              e.target.value = ''
+            }}
+          />
           {/* The mobile chat covers the page-level alert, so show errors inside it. */}
           {error && (
             <div role="alert" className="lg:hidden m-2 p-3 max-h-28 overflow-y-auto bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm shrink-0">
@@ -1347,34 +1435,11 @@ export default function ChatsPage() {
             </div>
           ) : chatDetail ? (
             <>
-              <input
-                ref={pdfInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  void handleMobilePdfSelect(f)
-                  e.target.value = ''
-                }}
-              />
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const files = e.target.files
-                  void handleImageFilesSelect(files)
-                  e.target.value = ''
-                }}
-              />
               {/* Chat Header */}
               <div className="px-2 py-2 lg:px-4 lg:py-4 border-b border-gray-200 flex items-center justify-between gap-2 bg-white shrink-0 pt-[max(8px,env(safe-area-inset-top))] lg:pt-4">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <button
-                    onClick={() => { setSelectedChatId(null); setMobileMenuOpen(false) }}
+                    onClick={() => { handleSelectChat(null); setMobileMenuOpen(false) }}
                     className="lg:hidden flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-700"
                     aria-label="戻る"
                   >
@@ -1415,7 +1480,7 @@ export default function ChatsPage() {
                         if (idx < 0) return
                         const next = chats[(idx + 1) % chats.length]
                         if (next && next.id !== selectedChatId) {
-                          setSelectedChatId(next.id)
+                          handleSelectChat(next.id)
                         }
                       }}
                       className="rounded-md bg-emerald-600 px-3 py-1.5 min-h-[44px] lg:min-h-0 text-sm font-medium text-white hover:bg-emerald-700"
