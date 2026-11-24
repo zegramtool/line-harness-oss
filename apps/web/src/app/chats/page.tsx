@@ -916,7 +916,7 @@ export default function ChatsPage() {
   }
 
   const handleSendMessage = async () => {
-    if (!selectedChatId || sending || sendLockRef.current) return
+    if (!selectedChatId || sending || sendLockRef.current || imageUploading || pdfUploading) return
     if (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf) return
     const sendingChatId = selectedChatId
     sendLockRef.current = true
@@ -1095,7 +1095,7 @@ export default function ChatsPage() {
   }
 
   const handleImageFilesSelect = async (fileList: FileList | File[] | null | undefined) => {
-    if (!fileList?.length) return
+    if (!fileList?.length || imageUploading || sending) return
     const files = Array.from(fileList)
     const remaining = MAX_LINE_IMAGES_PER_PUSH - pendingImages.length
     if (remaining <= 0) {
@@ -1110,13 +1110,23 @@ export default function ChatsPage() {
     }
     setImageUploading(true)
     try {
-      const uploaded: LineImageUrls[] = []
+      const failures: string[] = []
       for (const file of toUpload) {
-        uploaded.push(await uploadLineImage(file))
+        try {
+          const uploaded = await uploadLineImage(file)
+          // 一件の失敗で、アップロード済みの画像や後続の選択を失わない。
+          setPendingImages((prev) => [...prev, uploaded].slice(0, MAX_LINE_IMAGES_PER_PUSH))
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : '画像のアップロードに失敗しました'
+          failures.push(`${file.name}: ${detail}`)
+        }
       }
-      setPendingImages((prev) => [...prev, ...uploaded].slice(0, MAX_LINE_IMAGES_PER_PUSH))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '画像のアップロードに失敗しました')
+      if (failures.length > 0) {
+        const limitNotice = files.length > remaining
+          ? `画像は最大${MAX_LINE_IMAGES_PER_PUSH}枚のため、先頭${remaining}枚を処理しました。\n`
+          : ''
+        setError(`${limitNotice}${failures.join('\n')}`)
+      }
     } finally {
       setImageUploading(false)
     }
@@ -1133,6 +1143,21 @@ export default function ChatsPage() {
       e.preventDefault()
       handleSendMessage()
     }
+  }
+
+  const handleImageDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    void handleImageFilesSelect(e.dataTransfer.files)
+  }
+
+  const handleImagePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(e.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+    if (files.length === 0) return
+    e.preventDefault()
+    void handleImageFilesSelect(files)
   }
 
   return (
@@ -1697,7 +1722,12 @@ export default function ChatsPage() {
               </div>
 
               {/* Mobile composer — LINE 風 */}
-              <div className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0">
+              <div
+                className="lg:hidden border-t border-gray-200 bg-[#efefef] px-2 pt-2 pb-[max(10px,env(safe-area-inset-bottom))] shrink-0"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleImageDrop}
+                onPaste={handleImagePaste}
+              >
                 {pdfUploading && (
                   <div className="mb-2 px-1 text-sm text-gray-600">PDF をアップロード中...</div>
                 )}
@@ -1774,7 +1804,7 @@ export default function ChatsPage() {
                   <button
                     type="button"
                     onClick={() => void handleSendMessage()}
-                    disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
+                    disabled={sending || imageUploading || pdfUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
                     className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40"
                     style={{ backgroundColor: '#06C755' }}
                     aria-label={editingScheduledId ? '更新' : sendTiming === 'scheduled' ? '予約' : '送信'}
@@ -1787,7 +1817,12 @@ export default function ChatsPage() {
               </div>
 
               {/* Send Message Form — desktop */}
-              <div className="hidden lg:block px-4 py-3 border-t border-gray-200 shrink-0">
+              <div
+                className="hidden lg:block px-4 py-3 border-t border-gray-200 shrink-0"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleImageDrop}
+                onPaste={handleImagePaste}
+              >
                 <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
@@ -1838,6 +1873,7 @@ export default function ChatsPage() {
                   >
                     {imageUploading ? 'アップロード中...' : '📎 画像を選択'}
                   </button>
+                  <span className="ml-2 text-xs text-gray-500">画像をドラッグ＆ドロップ / 貼り付けできます</span>
                   <ChatPendingImages
                     images={pendingImages}
                     uploading={imageUploading}
@@ -1906,7 +1942,7 @@ export default function ChatsPage() {
                   />
                   <button
                     onClick={handleSendMessage}
-                    disabled={sending || imageUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
+                    disabled={sending || imageUploading || pdfUploading || (!messageContent.trim() && pendingImages.length === 0 && !pendingPdf)}
                     className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
