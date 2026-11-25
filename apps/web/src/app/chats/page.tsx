@@ -1387,13 +1387,17 @@ export default function ChatsPage() {
             type="file"
             accept="application/pdf,.pdf"
             className="hidden"
-            onClick={() => { pdfPickerScopeRef.current = chatScopeRef.current }}
+            onClick={(e) => {
+              // Keep the selected file available while mobile browsers read it.
+              // Reset before the next picker opens so the same file can be selected again.
+              e.currentTarget.value = ''
+              pdfPickerScopeRef.current = chatScopeRef.current
+            }}
             onChange={(e) => {
               const file = e.target.files?.[0]
               const scope = pdfPickerScopeRef.current ?? chatScopeRef.current
               pdfPickerScopeRef.current = null
               void handleMobilePdfSelect(file, scope)
-              e.target.value = ''
             }}
           />
           <input

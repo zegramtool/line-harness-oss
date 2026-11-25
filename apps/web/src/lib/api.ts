@@ -53,6 +53,18 @@ export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   failedAccountIds: string[] | null;
 };
 
+type UploadedChatPdf = {
+  id: string
+  key: string
+  url: string
+  mimeType: string
+  size: number
+  fileName: string
+  expiresAt: string
+  expiresAtLabel: string
+  ttlDays: number
+}
+
 export type BroadcastInsight = {
   broadcastId?: string
   delivered: number | null
@@ -1323,36 +1335,33 @@ export const api = {
         body: buf,
       })
     },
-    pdf: async (file: File): Promise<ApiResponse<{
-      id: string
-      key: string
-      url: string
-      mimeType: string
-      size: number
-      fileName: string
-      expiresAt: string
-      expiresAtLabel: string
-      ttlDays: number
-    }>> => {
-      const buf = await file.arrayBuffer()
-      return fetchApi<ApiResponse<{
-        id: string
-        key: string
-        url: string
-        mimeType: string
-        size: number
-        fileName: string
-        expiresAt: string
-        expiresAtLabel: string
-        ttlDays: number
-      }>>('/api/files', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/pdf',
-          'X-Filename': encodeURIComponent(file.name || 'document.pdf'),
-        },
-        body: buf,
-      })
+    pdf: async (file: File): Promise<ApiResponse<UploadedChatPdf>> => {
+      const readError = 'PDFファイルを読み込めませんでした。端末に保存してから選び直してください。'
+      let body: ArrayBuffer
+      try {
+        body = await file.arrayBuffer()
+      } catch (error) {
+        throw new Error(readError, { cause: error })
+      }
+      if (body.byteLength === 0 || body.byteLength !== file.size) {
+        throw new Error(readError)
+      }
+
+      try {
+        return await fetchApi<ApiResponse<UploadedChatPdf>>('/api/files', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/pdf',
+            'X-Filename': encodeURIComponent(file.name || 'document.pdf'),
+          },
+          body,
+        })
+      } catch (error) {
+        if (error instanceof TypeError) {
+          throw new Error('サーバーに接続できませんでした。通信状態を確認して、PDFを選び直してください。', { cause: error })
+        }
+        throw error
+      }
     },
   },
 }
